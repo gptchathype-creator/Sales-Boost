@@ -782,11 +782,12 @@ export function startServer(): Promise<void> {
       resolve();
     };
 
-    const host = '0.0.0.0'; // listen on all interfaces so localhost and tunnel both work
+    const host = '0.0.0.0'; // listen on all interfaces (Railway requires this)
+    const port = parseInt(process.env.PORT || String(config.port), 10);
 
     const onError = (err: NodeJS.ErrnoException) => {
       if (err.code === 'EADDRINUSE') {
-        console.error('[ERROR] Port ' + config.port + ' is already in use.');
+        console.error('[ERROR] Port ' + port + ' is already in use.');
         console.error('        Stop the other process or use another port: PORT=3002 npm run dev');
       } else {
         console.error('[ERROR] Server error:', err);
@@ -801,8 +802,8 @@ export function startServer(): Promise<void> {
       };
       const httpsServer = https.createServer(options, app);
       httpsServer.on('error', onError);
-      httpsServer.listen(config.port, host, () => {
-        console.log('[OK] HTTPS server: http://localhost:' + config.port);
+      httpsServer.listen(port, host, () => {
+        console.log('[OK] HTTPS server: http://localhost:' + port);
         console.log('     Mini App URL: ' + config.miniAppUrl);
         console.log('     (Self-signed cert - Telegram may show warning)');
         onListen();
@@ -810,10 +811,10 @@ export function startServer(): Promise<void> {
     } else {
       const httpServer = http.createServer(app);
       httpServer.on('error', onError);
-      httpServer.listen(config.port, host, () => {
-        console.log('[OK] HTTP server: http://localhost:' + config.port);
-        console.log('     Open in browser: http://localhost:' + config.port);
-        console.log('     Health: http://localhost:' + config.port + '/health');
+      httpServer.listen(port, host, () => {
+        console.log('[OK] HTTP server: http://localhost:' + port);
+        console.log('     Open in browser: http://localhost:' + port);
+        console.log('     Health: http://localhost:' + port + '/health');
         if (useTunnel) {
           console.log('     Tunnel will provide HTTPS for Telegram.');
         }
