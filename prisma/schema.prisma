@@ -1,0 +1,129 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id              Int      @id @default(autoincrement())
+  telegramId      String   @unique
+  fullName        String
+  role            String   @default("manager") // "manager" | "admin"
+  preferencesJson String?  // { replyMode: "text"|"voice", ttsVoice: "male"|"female" }
+  createdAt       DateTime @default(now())
+
+  attempts         Attempt[]
+  trainingSessions TrainingSession[]
+
+  @@map("users")
+}
+
+model TrainingSession {
+  id               Int       @id @default(autoincrement())
+  userId           Int
+  status           String    // "assigned" | "in_progress" | "completed" | "cancelled"
+  stateJson        String?   // JSON: { stage, checklist, notes, client_turns }
+  createdAt        DateTime  @default(now())
+  completedAt      DateTime?
+  assessmentScore  Float?    // 0-100, from generateTrainingAssessment
+  assessmentJson   String?   // JSON: { score, quality, improvements, mistakes }
+
+  user     User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages DialogMessage[]
+
+  @@map("training_sessions")
+}
+
+model DialogMessage {
+  id        Int      @id @default(autoincrement())
+  sessionId Int
+  role      String   // "client" | "manager"
+  content   String
+  source    String   @default("text") // "text" | "voice"
+  voiceFileId      String?
+  voiceDurationSec Int?
+  createdAt DateTime @default(now())
+
+  session TrainingSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@map("dialog_messages")
+}
+
+model Test {
+  id                    Int       @id @default(autoincrement())
+  title                 String
+  isActive              Boolean   @default(true)
+  useVirtualCustomer    Boolean   @default(false)
+  virtualCustomerConfigJson String? // JSON: { car: {...}, dealership: "..." }
+  createdAt             DateTime  @default(now())
+
+  steps   TestStep[]
+  attempts Attempt[]
+
+  @@map("tests")
+}
+
+model TestStep {
+  id               Int    @id @default(autoincrement())
+  testId           Int
+  order            Int
+  customerMessage  String
+  stepGoal         String
+  scoringFocusJson String // JSON array of criteria codes
+
+  test           Test            @relation(fields: [testId], references: [id], onDelete: Cascade)
+  attemptAnswers AttemptAnswer[]
+
+  @@unique([testId, order])
+  @@map("test_steps")
+}
+
+model Attempt {
+  id                     Int       @id @default(autoincrement())
+  userId                 Int
+  testId                 Int
+  status                 String    // "in_progress" | "completed" | "cancelled"
+  currentStep            Int       @default(1)
+  startedAt              DateTime  @default(now())
+  finishedAt             DateTime?
+  lastStepSentAt         DateTime? // When last step was sent (for timeout tracking)
+  totalScore             Float?
+  level                  String?   // "Junior" | "Middle" | "Senior"
+  strengthsJson          String?   // JSON array
+  weaknessesJson         String?   // JSON array
+  recommendationsJson    String?   // JSON array
+  suspicionFlagsJson     String?   // JSON array
+  evaluationError        String?
+  evaluationResultJson   String?   // JSON: full evaluation result (for virtual customer step details)
+  conversationHistoryJson String?  // JSON array of { role: "client"|"manager", text: string } (virtual customer)
+  virtualCustomerStateJson String? // JSON: { stage, checklist, notes } (virtual customer)
+
+  user    User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  test    Test           @relation(fields: [testId], references: [id])
+  answers AttemptAnswer[]
+
+  @@map("attempts")
+}
+
+model AttemptAnswer {
+  id               Int       @id @default(autoincrement())
+  attemptId        Int
+  stepId           Int
+  answerText       String
+  createdAt        DateTime  @default(now())
+  stepScore        Float?
+  criteriaScoresJson String? // JSON object
+  feedback         String?
+  betterExample    String?
+
+  attempt Attempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  step    TestStep @relation(fields: [stepId], references: [id])
+
+  @@map("attempt_answers")
+}

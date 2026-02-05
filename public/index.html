@@ -1,0 +1,1740 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Админ-панель Sales Boost</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--tg-theme-bg-color, #ffffff);
+            color: var(--tg-theme-text-color, #000000);
+            padding: 16px;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 24px;
+            padding: 16px;
+            background: var(--tg-theme-secondary-bg-color, #f0f0f0);
+            border-radius: 12px;
+        }
+
+        .header h1 {
+            font-size: 24px;
+            margin-bottom: 8px;
+        }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+            border-bottom: 2px solid var(--tg-theme-secondary-bg-color, #e0e0e0);
+        }
+
+        .tab {
+            padding: 12px 16px;
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 16px;
+            color: var(--tg-theme-hint-color, #999);
+            border-bottom: 2px solid transparent;
+            margin-bottom: -2px;
+            transition: all 0.2s;
+        }
+
+        .tab.active {
+            color: var(--tg-theme-button-color, #3390ec);
+            border-bottom-color: var(--tg-theme-button-color, #3390ec);
+            font-weight: 600;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .card {
+            background: var(--tg-theme-secondary-bg-color, #f8f8f8);
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 12px;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .card-title {
+            font-weight: 600;
+            font-size: 18px;
+        }
+
+        .badge {
+            padding: 6px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .badge.junior { background: #ffebee; color: #c62828; }
+        .badge.middle { background: #fff3e0; color: #e65100; }
+        .badge.senior { background: #e8f5e9; color: #2e7d32; }
+        .badge.poor { background: #ffebee; color: #c62828; }
+        .badge.average { background: #fff8e1; color: #f57c00; }
+        .badge.good { background: #e8f5e9; color: #2e7d32; }
+
+        .score {
+            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+        .score.high { color: #2e7d32; }
+        .score.medium { color: #f57c00; }
+        .score.low { color: #c62828; }
+        .score.unknown { color: var(--tg-theme-hint-color, #999); }
+
+        .meta {
+            font-size: 12px;
+            color: var(--tg-theme-hint-color, #999);
+            margin-top: 8px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px 16px;
+            color: var(--tg-theme-text-color, #000000);
+            font-size: 16px;
+        }
+
+        .error {
+            background: #ffebee;
+            color: #c62828;
+            padding: 16px;
+            border-radius: 12px;
+            margin-bottom: 16px;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            background: var(--tg-theme-button-color, #3390ec);
+            color: var(--tg-theme-button-text-color, #ffffff);
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            width: 100%;
+            margin-bottom: 16px;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* Detail view styles */
+        .detail-view {
+            display: none;
+        }
+
+        .detail-view.active {
+            display: block;
+        }
+
+        .summary-section {
+            background: var(--tg-theme-secondary-bg-color, #f8f8f8);
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+
+        .summary-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--tg-theme-text-color, #000);
+            margin-bottom: 16px;
+        }
+
+        .summary-block {
+            margin-bottom: 16px;
+        }
+
+        .summary-block:last-child {
+            margin-bottom: 0;
+        }
+
+        .summary-block-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--tg-theme-hint-color, #666);
+            margin-bottom: 6px;
+        }
+
+        .summary-list {
+            list-style: none;
+        }
+
+        .summary-list li {
+            font-size: 14px;
+            line-height: 1.5;
+            padding: 4px 0;
+            color: var(--tg-theme-text-color, #000);
+        }
+
+        .step-detail {
+            background: var(--tg-theme-secondary-bg-color, #f8f8f8);
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+
+        .step-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+            padding-bottom: 12px;
+            border-bottom: 2px solid var(--tg-theme-bg-color, #ffffff);
+        }
+
+        .step-number {
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--tg-theme-button-color, #3390ec);
+        }
+
+        .step-score {
+            font-size: 18px;
+            font-weight: 600;
+        }
+        .step-score.high { color: #2e7d32; }
+        .step-score.medium { color: #f57c00; }
+        .step-score.low { color: #c62828; }
+        .step-score.unknown { color: var(--tg-theme-hint-color, #999); }
+
+        .question-box {
+            background: var(--tg-theme-bg-color, #ffffff);
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 12px;
+            border-left: 4px solid #4caf50;
+        }
+
+        .question-label {
+            font-size: 12px;
+            color: var(--tg-theme-hint-color, #999);
+            margin-bottom: 4px;
+            font-weight: 600;
+        }
+
+        .question-text {
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        .answer-box {
+            background: var(--tg-theme-bg-color, #ffffff);
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 12px;
+            border-left: 4px solid #2196f3;
+        }
+
+        .answer-label {
+            font-size: 12px;
+            color: var(--tg-theme-hint-color, #999);
+            margin-bottom: 4px;
+            font-weight: 600;
+        }
+
+        .answer-text {
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        .feedback-box {
+            background: #fff3e0;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 12px;
+            border-left: 4px solid #ff9800;
+        }
+
+        .feedback-label {
+            font-size: 12px;
+            color: #e65100;
+            margin-bottom: 4px;
+            font-weight: 600;
+        }
+
+        .feedback-text {
+            font-size: 14px;
+            line-height: 1.5;
+            color: #333;
+        }
+
+        .better-example-box {
+            background: #e8f5e9;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 12px;
+            border-left: 4px solid #4caf50;
+        }
+
+        .better-example-label {
+            font-size: 12px;
+            color: #2e7d32;
+            margin-bottom: 4px;
+            font-weight: 600;
+        }
+
+        .better-example-text {
+            font-size: 14px;
+            line-height: 1.5;
+            color: #333;
+        }
+
+        .criteria-scores {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 8px;
+        }
+
+        .criteria-badge {
+            padding: 4px 8px;
+            background: var(--tg-theme-bg-color, #ffffff);
+            border-radius: 6px;
+            font-size: 11px;
+            border: 1px solid var(--tg-theme-secondary-bg-color, #e0e0e0);
+        }
+
+        .pagination {
+            display: flex;
+            justify-content: center;
+            gap: 8px;
+            margin-top: 16px;
+        }
+
+        .pagination-btn {
+            padding: 8px 16px;
+            background: var(--tg-theme-button-color, #3390ec);
+            color: var(--tg-theme-button-text-color, #ffffff);
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .pagination-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* Team Summary Styles */
+        .stat-card {
+            background: var(--tg-theme-secondary-bg-color, #f8f8f8);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 16px;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 36px;
+            font-weight: 700;
+            color: var(--tg-theme-button-color, #3390ec);
+            margin-bottom: 8px;
+        }
+
+        .stat-label {
+            font-size: 14px;
+            color: var(--tg-theme-hint-color, #999);
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+
+        .chart-container {
+            background: var(--tg-theme-secondary-bg-color, #f8f8f8);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 16px;
+        }
+
+        .chart-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            color: var(--tg-theme-button-color, #3390ec);
+        }
+
+        .bar-chart {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .bar-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .bar-label {
+            min-width: 80px;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .bar-wrapper {
+            flex: 1;
+            height: 32px;
+            background: var(--tg-theme-bg-color, #ffffff);
+            border-radius: 16px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .bar-fill {
+            height: 100%;
+            border-radius: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            padding-right: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            color: white;
+            transition: width 0.5s ease;
+        }
+
+        .bar-fill.junior { background: linear-gradient(90deg, #ff5252, #ff7979); }
+        .bar-fill.middle { background: linear-gradient(90deg, #ff9800, #ffb74d); }
+        .bar-fill.senior { background: linear-gradient(90deg, #4caf50, #66bb6a); }
+
+        .bar-value {
+            min-width: 40px;
+            text-align: right;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .insight-card {
+            background: var(--tg-theme-secondary-bg-color, #f8f8f8);
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 12px;
+            border-left: 4px solid var(--tg-theme-button-color, #3390ec);
+        }
+
+        .insight-title {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: var(--tg-theme-button-color, #3390ec);
+        }
+
+        .insight-text {
+            font-size: 14px;
+            line-height: 1.6;
+            color: var(--tg-theme-text-color, #000000);
+        }
+
+        .pie-chart {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin: 20px 0;
+            position: relative;
+            width: 200px;
+            height: 200px;
+            margin: 20px auto;
+        }
+
+        .pie-svg {
+            transform: rotate(-90deg);
+        }
+
+        .pie-legend {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-top: 16px;
+        }
+
+        .pie-legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+        }
+
+        .pie-legend-color {
+            width: 16px;
+            height: 16px;
+            border-radius: 4px;
+        }
+
+        /* Expert summary styles */
+        .expert-section {
+            background: var(--tg-theme-secondary-bg-color, #f8f8f8);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 16px;
+        }
+
+        .expert-section-title {
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--tg-theme-button-color, #3390ec);
+            margin-bottom: 12px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--tg-theme-button-color, #3390ec);
+        }
+
+        .expert-text {
+            font-size: 14px;
+            line-height: 1.8;
+            color: var(--tg-theme-text-color, #000000);
+            text-align: justify;
+        }
+
+        .finding-item {
+            background: var(--tg-theme-bg-color, #ffffff);
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 12px;
+            border-left: 4px solid var(--tg-theme-button-color, #3390ec);
+        }
+
+        .finding-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--tg-theme-button-color, #3390ec);
+            margin-bottom: 8px;
+        }
+
+        .finding-description {
+            font-size: 14px;
+            line-height: 1.6;
+            color: var(--tg-theme-text-color, #000000);
+            margin-bottom: 8px;
+        }
+
+        .finding-examples {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid var(--tg-theme-secondary-bg-color, #e0e0e0);
+        }
+
+        .finding-examples ul {
+            margin: 8px 0 0 20px;
+            padding: 0;
+        }
+
+        .finding-examples li {
+            font-size: 13px;
+            color: var(--tg-theme-hint-color, #666);
+            margin-bottom: 4px;
+        }
+
+        .action-item {
+            background: var(--tg-theme-bg-color, #ffffff);
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 12px;
+            border-left: 4px solid #4caf50;
+        }
+
+        .action-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 8px;
+            gap: 12px;
+        }
+
+        .action-title {
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--tg-theme-text-color, #000000);
+            flex: 1;
+        }
+
+        .action-priority {
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        .action-priority.высокий,
+        .action-priority.high {
+            background: #ffebee;
+            color: #c62828;
+        }
+
+        .action-priority.средний,
+        .action-priority.medium {
+            background: #fff3e0;
+            color: #e65100;
+        }
+
+        .action-priority.низкий,
+        .action-priority.low {
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+
+        .action-details {
+            font-size: 12px;
+            color: var(--tg-theme-hint-color, #999);
+            line-height: 1.6;
+        }
+
+        .recommendation-item {
+            background: var(--tg-theme-bg-color, #ffffff);
+            border-radius: 8px;
+            padding: 14px;
+            margin-bottom: 10px;
+            border-left: 4px solid #2196f3;
+            font-size: 14px;
+            line-height: 1.7;
+            color: var(--tg-theme-text-color, #000000);
+        }
+
+        /* Filter styles */
+        .filters-container {
+            background: var(--tg-theme-secondary-bg-color, #f8f8f8);
+            border-radius: 12px;
+            padding: 12px;
+            margin-bottom: 16px;
+        }
+
+        .filter-search {
+            width: 100%;
+            margin-bottom: 12px;
+        }
+
+        .filter-buttons-row {
+            display: flex;
+            gap: 8px;
+            flex-wrap: nowrap;
+            margin-bottom: 8px;
+        }
+
+        .filter-buttons-row .filter-btn {
+            flex: 1;
+            min-width: 0;
+            justify-content: center;
+        }
+
+        .filter-input {
+            flex: 1;
+            min-width: 120px;
+            padding: 8px 12px;
+            border: 1px solid var(--tg-theme-secondary-bg-color, #e0e0e0);
+            border-radius: 8px;
+            font-size: 13px;
+            background: var(--tg-theme-bg-color, #ffffff);
+            color: var(--tg-theme-text-color, #000000);
+        }
+
+        .filter-input:focus {
+            outline: none;
+            border-color: var(--tg-theme-button-color, #3390ec);
+        }
+
+        .filter-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+
+        .filter-btn {
+            padding: 6px 12px;
+            border: 1px solid var(--tg-theme-secondary-bg-color, #e0e0e0);
+            border-radius: 8px;
+            background: var(--tg-theme-bg-color, #ffffff);
+            color: var(--tg-theme-text-color, #000000);
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            position: relative;
+        }
+
+        .filter-btn:hover {
+            background: var(--tg-theme-secondary-bg-color, #f0f0f0);
+        }
+
+        .filter-btn.active {
+            background: var(--tg-theme-button-color, #3390ec);
+            color: var(--tg-theme-button-text-color, #ffffff);
+            border-color: var(--tg-theme-button-color, #3390ec);
+        }
+
+        .filter-count {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 2px 6px;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: 600;
+            min-width: 20px;
+            text-align: center;
+        }
+
+        .filter-btn.active .filter-count {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .expand-filters-btn {
+            width: 100%;
+            padding: 8px;
+            background: transparent;
+            border: 1px dashed var(--tg-theme-secondary-bg-color, #e0e0e0);
+            border-radius: 8px;
+            color: var(--tg-theme-hint-color, #999);
+            font-size: 12px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            margin-top: 8px;
+        }
+
+        .expand-filters-btn:hover {
+            background: var(--tg-theme-secondary-bg-color, #f0f0f0);
+            border-color: var(--tg-theme-button-color, #3390ec);
+            color: var(--tg-theme-button-color, #3390ec);
+        }
+
+        .advanced-filters {
+            display: none;
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid var(--tg-theme-secondary-bg-color, #e0e0e0);
+        }
+
+        .advanced-filters.expanded {
+            display: block;
+        }
+
+        .filter-section {
+            margin-bottom: 12px;
+        }
+
+        .filter-section:last-child {
+            margin-bottom: 0;
+        }
+
+        .filter-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--tg-theme-text-color, #000000);
+            margin-bottom: 6px;
+        }
+
+        .filter-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .filter-chip {
+            padding: 5px 10px;
+            border-radius: 14px;
+            font-size: 11px;
+            background: var(--tg-theme-bg-color, #ffffff);
+            border: 1px solid var(--tg-theme-secondary-bg-color, #e0e0e0);
+            color: var(--tg-theme-text-color, #000000);
+            cursor: pointer;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            white-space: nowrap;
+        }
+
+        .filter-chip:hover {
+            background: var(--tg-theme-secondary-bg-color, #f0f0f0);
+        }
+
+        .filter-chip.active {
+            background: #fff3e0;
+            border-color: #ff9800;
+            color: #e65100;
+        }
+
+        .chip-count {
+            background: rgba(0, 0, 0, 0.1);
+            padding: 1px 5px;
+            border-radius: 8px;
+            font-size: 10px;
+            font-weight: 600;
+        }
+
+        .filter-chip.active .chip-count {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .results-count {
+            font-size: 12px;
+            color: var(--tg-theme-hint-color, #999);
+            margin-bottom: 12px;
+            padding: 0 4px;
+        }
+
+        .btn-external {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 14px 24px;
+            background: var(--tg-theme-button-color, #3390ec);
+            color: var(--tg-theme-button-text-color, #ffffff);
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            text-decoration: none;
+            margin-top: 16px;
+            width: 100%;
+            justify-content: center;
+        }
+        .btn-external:hover {
+            opacity: 0.9;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📊 Админ-панель</h1>
+            <p id="userInfo">Загрузка...</p>
+        </div>
+
+        <!-- Tabs -->
+        <div class="tabs">
+            <button class="tab active" onclick="switchTab('employees')">👤 Сотрудники</button>
+            <button class="tab" onclick="switchTab('team')">📊 Команда</button>
+            <button class="tab" onclick="switchTab('expenses')">💰 Баланс</button>
+        </div>
+
+        <!-- Employees Tab -->
+        <div id="employeesTab" class="tab-content active">
+            <div id="filtersContainer" class="filters-container">
+                <input type="text" id="nameFilter" class="filter-input filter-search" placeholder="Поиск сотрудников" oninput="applyFilters()">
+                <div class="filter-buttons-row">
+                    <button class="filter-btn" onclick="toggleLevelFilter('all')" data-level="all">
+                        Все<span class="filter-count" id="count-all">0</span>
+                    </button>
+                    <button class="filter-btn" onclick="toggleLevelFilter('Хорошо')" data-level="Хорошо">
+                        Хорошо<span class="filter-count" id="count-Хорошо">0</span>
+                    </button>
+                    <button class="filter-btn" onclick="toggleLevelFilter('Средне')" data-level="Средне">
+                        Средне<span class="filter-count" id="count-Средне">0</span>
+                    </button>
+                    <button class="filter-btn" onclick="toggleLevelFilter('Плохо')" data-level="Плохо">
+                        Плохо<span class="filter-count" id="count-Плохо">0</span>
+                    </button>
+                </div>
+
+                <!-- Expandable advanced filters -->
+                <button class="expand-filters-btn" onclick="toggleAdvancedFilters()">
+                    <span id="expandIcon">▼</span>
+                    <span id="expandText">Дополнительные фильтры</span>
+                </button>
+
+                <div id="advancedFilters" class="advanced-filters">
+                    <div class="filter-section">
+                        <div class="filter-title">⚠️ Фильтры по проблемам</div>
+                        <div class="filter-chips" id="problemFilters">
+                            <!-- Will be populated dynamically -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="listView">
+                <div id="resultsCount" class="results-count"></div>
+                <div id="attemptsList">
+                    <div id="initialLoading" class="loading">
+                        Загрузка…
+                        <div style="margin-top:12px;font-size:13px;color:var(--tg-theme-hint-color,#666);">
+                            Если ничего не загрузилось за 10 сек — закройте окно, напишите /admin в боте и нажмите кнопку снова.
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Detail view -->
+            <div id="detailView" class="detail-view">
+                <button class="btn" onclick="showListView()">← Назад к списку</button>
+                <div id="attemptDetails">
+                    <div class="loading">Загрузка...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Team Summary Tab -->
+        <div id="teamTab" class="tab-content">
+            <div id="teamSummary">
+                <div class="loading">Загрузка...</div>
+            </div>
+        </div>
+
+        <!-- Expenses Tab -->
+        <div id="expensesTab" class="tab-content">
+            <div id="expensesContent">
+                <div class="loading">Загрузка...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = window.location.origin;
+        // In Telegram Mini App, Telegram injects WebApp before the page loads; script from telegram.org is fallback for browser
+        const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
+        if (tg) {
+            tg.ready();
+            tg.expand();
+        }
+
+        let currentPage = 0;
+        let currentAttemptId = null;
+        let currentTab = 'employees';
+        let allAttempts = [];
+        let filters = {
+            name: '',
+            level: 'all',
+            problems: []
+        };
+
+        function showError(listEl, userInfoEl, msg) {
+            if (userInfoEl) userInfoEl.textContent = 'Ошибка';
+            if (listEl) listEl.innerHTML = '<div class="error">' + (msg || 'Ошибка загрузки') + '</div>';
+        }
+
+        async function init() {
+            const userInfoEl = document.getElementById('userInfo');
+            const listEl = document.getElementById('attemptsList');
+            if (!userInfoEl || !listEl) {
+                document.body.innerHTML = '<div class="error">Ошибка: элементы страницы не найдены.</div>';
+                return;
+            }
+
+            var initDone = false;
+            var safetyTimer = setTimeout(function() {
+                if (initDone) return;
+                showError(listEl, userInfoEl,
+                    'Сервер не ответил за 10 сек. Убедитесь: 1) Бот запущен (npm run dev). 2) В терминале есть строка [TUNNEL] https://... 3) Закройте окно, напишите /admin в боте и нажмите кнопку «Открыть Админ-панель» снова.');
+            }, 10000);
+
+            var telegram = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
+            if (!telegram) {
+                await new Promise(function(r) { setTimeout(r, 400); });
+                telegram = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
+            }
+            if (telegram) {
+                telegram.ready();
+                telegram.expand();
+            }
+            if (!telegram) {
+                clearTimeout(safetyTimer);
+                initDone = true;
+                userInfoEl.textContent = 'Не из Telegram';
+                listEl.innerHTML = '<div class="error">Откройте панель только через кнопку «Открыть Админ-панель» в чате с ботом (напишите /admin). Если вы уже нажали кнопку в боте — закройте это окно и нажмите кнопку снова.</div>';
+                return;
+            }
+
+            try {
+                var initData = telegram.initData || '';
+                var controller = new AbortController();
+                var timeoutId = setTimeout(function() { controller.abort(); }, 8000);
+                var response = await fetch(API_BASE + '/api/admin/verify?initData=' + encodeURIComponent(initData), { signal: controller.signal });
+                clearTimeout(timeoutId);
+                var data = await response.json().catch(function() { return {}; });
+                
+                if (!response.ok) {
+                    throw new Error(data.error || 'Ошибка авторизации (код ' + response.status + ')');
+                }
+
+                clearTimeout(safetyTimer);
+                initDone = true;
+
+                userInfoEl.textContent = 
+                    'Пользователь: ' + (data.user && (data.user.firstName || data.user.username || data.user.id) || '—');
+                
+                var allBtn = document.querySelector('.filter-btn[data-level="all"]');
+                if (allBtn) allBtn.classList.add('active');
+                
+                loadAttempts();
+            } catch (error) {
+                clearTimeout(safetyTimer);
+                initDone = true;
+                var msg = (error && error.message) ? error.message : 'Ошибка загрузки';
+                if (error && error.name === 'AbortError') {
+                    msg = 'Сервер не ответил. Убедитесь, что бот запущен (npm run dev) и в терминале есть строка [TUNNEL] https://... Закройте это окно, напишите /admin в боте и нажмите кнопку «Открыть Админ-панель» снова.';
+                } else if (msg.indexOf('401') !== -1 || msg.indexOf('403') !== -1 || msg.indexOf('авториз') !== -1) {
+                    msg = 'Ошибка доступа. Если открыли из Telegram — закройте панель и нажмите кнопку «Открыть Админ-панель» в чате с ботом ещё раз.';
+                }
+                showError(listEl, userInfoEl, msg);
+            }
+        }
+
+        function switchTab(tab) {
+            currentTab = tab;
+            
+            const tabs = document.querySelectorAll('.tab');
+            const contents = document.querySelectorAll('.tab-content');
+            const tabMap = { employees: 0, team: 1, expenses: 2 };
+            tabs.forEach((t, i) => {
+                t.classList.remove('active');
+                if (tabMap[tab] === i) t.classList.add('active');
+            });
+            contents.forEach(c => c.classList.remove('active'));
+            
+            if (tab === 'employees') {
+                document.getElementById('employeesTab').classList.add('active');
+                if (document.getElementById('listView').style.display !== 'none') {
+                    loadAttempts();
+                }
+            } else if (tab === 'team') {
+                document.getElementById('teamTab').classList.add('active');
+                loadTeamSummary();
+            } else if (tab === 'expenses') {
+                document.getElementById('expensesTab').classList.add('active');
+                loadExpenses();
+            }
+        }
+
+        async function loadAttempts(page = 0) {
+            const listContainer = document.getElementById('attemptsList');
+            listContainer.innerHTML = '<div class="loading">Загрузка...</div>';
+
+            try {
+                // Load all attempts (we'll filter on client side)
+                // Use a large limit to get all attempts for filtering
+                const response = await fetch(API_BASE + '/api/admin/attempts?page=0&limit=1000');
+                const data = await response.json();
+
+                if (data.attempts.length === 0) {
+                    listContainer.innerHTML = '<div class="error">Нет завершенных попыток</div>';
+                    allAttempts = [];
+                    displayFilteredAttempts();
+                    return;
+                }
+
+                // Store all attempts for filtering
+                allAttempts = data.attempts;
+
+                // Initialize problem filters and update counts
+                initializeProblemFilters();
+                updateFilterCounts();
+
+                // Apply filters and display
+                displayFilteredAttempts();
+            } catch (error) {
+                listContainer.innerHTML = `<div class="error">Ошибка: ${error.message}</div>`;
+            }
+        }
+
+        function displayFilteredAttempts() {
+            const listContainer = document.getElementById('attemptsList');
+            const resultsCount = document.getElementById('resultsCount');
+
+            // Apply filters
+            let filtered = allAttempts.filter(attempt => {
+                // Name filter
+                if (filters.name && !attempt.userName.toLowerCase().includes(filters.name.toLowerCase())) {
+                    return false;
+                }
+
+                // Quality filter (Плохо/Средне/Хорошо)
+                if (filters.level !== 'all' && attempt.qualityTag !== filters.level) {
+                    return false;
+                }
+
+                // Problems filter
+                if (filters.problems.length > 0) {
+                    const attemptWeaknesses = attempt.weaknesses || [];
+                    const hasAnyProblem = filters.problems.some(problem => 
+                        attemptWeaknesses.some(w => w.toLowerCase().includes(problem.toLowerCase()))
+                    );
+                    if (!hasAnyProblem) {
+                        return false;
+                    }
+                }
+
+                return true;
+            });
+
+            // Update results count
+            resultsCount.textContent = `Найдено: ${filtered.length} из ${allAttempts.length}`;
+
+            if (filtered.length === 0) {
+                listContainer.innerHTML = '<div class="error">Нет результатов по заданным фильтрам</div>';
+                return;
+            }
+
+            const html = filtered.map(attempt => {
+                const score = attempt.totalScore;
+                const scoreDisplay = score != null
+                    ? score.toFixed(1) + '/100'
+                    : (attempt.evaluationError ? 'Ошибка оценки' : 'Н/Д') + '/100';
+                const scoreClass = score != null
+                    ? (score >= 76 ? 'high' : score >= 50 ? 'medium' : 'low')
+                    : 'unknown';
+                const qualityTag = attempt.qualityTag || (score != null ? (score >= 76 ? 'Хорошо' : score >= 50 ? 'Средне' : 'Плохо') : null);
+                const badgeClass = qualityTag === 'Хорошо' ? 'good' : qualityTag === 'Средне' ? 'average' : qualityTag === 'Плохо' ? 'poor' : '';
+                const summary = attempt.summary || '';
+                const idAttr = typeof attempt.id === 'string' ? `'${attempt.id}'` : attempt.id;
+                const typeAttr = attempt.type ? `'${attempt.type}'` : "'attempt'";
+                return `
+                <div class="card" onclick="showAttemptDetail(${idAttr}, ${typeAttr})">
+                    <div class="card-header">
+                        <div class="card-title">${escapeHtml(attempt.userName)}</div>
+                        ${qualityTag ? `<span class="badge ${badgeClass}">${escapeHtml(qualityTag)}</span>` : ''}
+                    </div>
+                    <div class="score ${scoreClass}">${scoreDisplay}</div>
+                    <div class="meta">
+                        ${new Date(attempt.finishedAt).toLocaleString('ru-RU')}
+                    </div>
+                    ${summary ? `
+                        <div style="margin-top: 8px; font-size: 13px; color: var(--tg-theme-hint-color, #888); line-height: 1.4;">
+                            ${escapeHtml(summary)}
+                        </div>
+                    ` : ''}
+                </div>
+            `}).join('');
+
+            listContainer.innerHTML = html;
+        }
+
+        function getFilterCounts() {
+            const counts = {
+                all: allAttempts.length,
+                'Хорошо': 0,
+                'Средне': 0,
+                'Плохо': 0
+            };
+
+            allAttempts.forEach(attempt => {
+                const tag = attempt.qualityTag || (attempt.totalScore != null ? (attempt.totalScore >= 76 ? 'Хорошо' : attempt.totalScore >= 50 ? 'Средне' : 'Плохо') : null);
+                if (tag && counts[tag] !== undefined) {
+                    counts[tag]++;
+                }
+            });
+
+            return counts;
+        }
+
+        function getProblemCounts() {
+            const problemCounts = {};
+            const chips = document.querySelectorAll('.filter-chip[data-problem]');
+            chips.forEach(chip => {
+                const problem = chip.dataset.problem;
+                if (problem) {
+                    problemCounts[problem] = allAttempts.filter(attempt => {
+                        const attemptWeaknesses = attempt.weaknesses || [];
+                        return attemptWeaknesses.some(w => w.toLowerCase().includes(problem.toLowerCase()));
+                    }).length;
+                }
+            });
+            return problemCounts;
+        }
+
+        function updateFilterCounts() {
+            const counts = getFilterCounts();
+            
+            // Update level filter counts
+            const countAll = document.getElementById('count-all');
+            const countGood = document.getElementById('count-Хорошо');
+            const countAvg = document.getElementById('count-Средне');
+            const countPoor = document.getElementById('count-Плохо');
+            
+            if (countAll) countAll.textContent = counts.all;
+            if (countGood) countGood.textContent = counts['Хорошо'] || 0;
+            if (countAvg) countAvg.textContent = counts['Средне'] || 0;
+            if (countPoor) countPoor.textContent = counts['Плохо'] || 0;
+
+            // Update problem filter counts
+            const problemCounts = getProblemCounts();
+            document.querySelectorAll('.filter-chip').forEach(chip => {
+                const problem = chip.dataset.problem;
+                if (problem && problemCounts[problem] !== undefined) {
+                    const countEl = chip.querySelector('.chip-count');
+                    if (countEl) {
+                        countEl.textContent = problemCounts[problem];
+                    } else {
+                        const countSpan = document.createElement('span');
+                        countSpan.className = 'chip-count';
+                        countSpan.textContent = problemCounts[problem];
+                        chip.appendChild(countSpan);
+                    }
+                }
+            });
+        }
+
+        function initializeProblemFilters() {
+            const problemFiltersContainer = document.getElementById('problemFilters');
+            if (!problemFiltersContainer) return;
+
+            const weaknessCounts = {};
+            allAttempts.forEach(attempt => {
+                const weaknesses = attempt.weaknesses || [];
+                weaknesses.forEach(w => {
+                    const key = w.trim();
+                    if (key.length > 2) {
+                        weaknessCounts[key] = (weaknessCounts[key] || 0) + 1;
+                    }
+                });
+            });
+
+            const problems = Object.entries(weaknessCounts)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 15)
+                .map(([text]) => text);
+
+            if (problems.length === 0) {
+                problemFiltersContainer.innerHTML = '<span style="font-size: 13px; color: var(--tg-theme-hint-color,#666);">Нет данных о проблемах. Пройдите тренировки для появления фильтров.</span>';
+                return;
+            }
+
+            problemFiltersContainer.innerHTML = problems.map(problem => {
+                const safeProblem = escapeHtml(problem);
+                const displayText = problem.length > 28 ? problem.substring(0, 28) + '…' : problem;
+                return `<span class="filter-chip" onclick="toggleProblemFilterByChip(this)" data-problem="${safeProblem}" title="${safeProblem}">${escapeHtml(displayText)}<span class="chip-count">0</span></span>`;
+            }).join('');
+        }
+
+        function toggleProblemFilterByChip(el) {
+            const problem = el?.dataset?.problem;
+            if (problem) toggleProblemFilter(problem);
+        }
+
+        function toggleAdvancedFilters() {
+            const advancedFilters = document.getElementById('advancedFilters');
+            const expandIcon = document.getElementById('expandIcon');
+            const expandText = document.getElementById('expandText');
+            
+            if (advancedFilters.classList.contains('expanded')) {
+                advancedFilters.classList.remove('expanded');
+                expandIcon.textContent = '▼';
+                expandText.textContent = 'Дополнительные фильтры';
+            } else {
+                advancedFilters.classList.add('expanded');
+                expandIcon.textContent = '▲';
+                expandText.textContent = 'Скрыть фильтры';
+            }
+        }
+
+        function toggleLevelFilter(level) {
+            filters.level = level;
+            
+            // Update button states
+            document.querySelectorAll('.filter-btn[data-level]').forEach(btn => {
+                btn.classList.remove('active');
+                if (btn.dataset.level === level) {
+                    btn.classList.add('active');
+                }
+            });
+
+            displayFilteredAttempts();
+        }
+
+        function toggleProblemFilter(problem) {
+            const index = filters.problems.indexOf(problem);
+            const chip = Array.from(document.querySelectorAll('.filter-chip[data-problem]')).find(c => c.dataset.problem === problem);
+            
+            if (index > -1) {
+                filters.problems.splice(index, 1);
+                if (chip) chip.classList.remove('active');
+            } else {
+                filters.problems.push(problem);
+                if (chip) chip.classList.add('active');
+            }
+
+            displayFilteredAttempts();
+        }
+
+        function clearAllFilters() {
+            filters = {
+                name: '',
+                level: 'all',
+                problems: []
+            };
+
+            // Clear name input
+            const nameInput = document.getElementById('nameFilter');
+            if (nameInput) nameInput.value = '';
+
+            // Clear level buttons
+            document.querySelectorAll('.filter-btn[data-level]').forEach(btn => {
+                btn.classList.remove('active');
+                if (btn.dataset.level === 'all') {
+                    btn.classList.add('active');
+                }
+            });
+
+            // Clear problem chips
+            document.querySelectorAll('.filter-chip').forEach(chip => {
+                chip.classList.remove('active');
+            });
+
+            displayFilteredAttempts();
+        }
+
+        function applyFilters() {
+            const nameInput = document.getElementById('nameFilter');
+            if (nameInput) {
+                filters.name = nameInput.value;
+            }
+            displayFilteredAttempts();
+        }
+
+        async function loadTeamSummary() {
+            const container = document.getElementById('teamSummary');
+            container.innerHTML = '<div class="loading">Загрузка...</div>';
+
+            try {
+                const response = await fetch(API_BASE + '/api/admin/summary');
+                const data = await response.json();
+
+                if (data.totalAttempts === 0) {
+                    container.innerHTML = '<div class="error">Нет данных для отображения</div>';
+                    return;
+                }
+
+                // Calculate percentages
+                const total = data.levelCounts.Junior + data.levelCounts.Middle + data.levelCounts.Senior;
+                const juniorPercent = total > 0 ? Math.round((data.levelCounts.Junior / total) * 100) : 0;
+                const middlePercent = total > 0 ? Math.round((data.levelCounts.Middle / total) * 100) : 0;
+                const seniorPercent = total > 0 ? Math.round((data.levelCounts.Senior / total) * 100) : 0;
+
+                // Calculate circumference for pie chart
+                const radius = 80;
+                const circumference = 2 * Math.PI * radius;
+                const juniorOffset = circumference - (juniorPercent / 100) * circumference;
+                const middleOffset = circumference - (middlePercent / 100) * circumference;
+                const seniorOffset = circumference - (seniorPercent / 100) * circumference;
+
+                let html = `
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-value">${data.totalAttempts}</div>
+                            <div class="stat-label">Всего попыток</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value">${data.avgScore}</div>
+                            <div class="stat-label">Средний балл</div>
+                        </div>
+                    </div>
+
+                    <div class="chart-container">
+                        <div class="chart-title">📈 Распределение по уровням</div>
+                        <div class="bar-chart">
+                            <div class="bar-item">
+                                <div class="bar-label">Junior</div>
+                                <div class="bar-wrapper">
+                                    <div class="bar-fill junior" style="width: ${juniorPercent}%">
+                                        ${juniorPercent > 10 ? juniorPercent + '%' : ''}
+                                    </div>
+                                </div>
+                                <div class="bar-value">${data.levelCounts.Junior}</div>
+                            </div>
+                            <div class="bar-item">
+                                <div class="bar-label">Middle</div>
+                                <div class="bar-wrapper">
+                                    <div class="bar-fill middle" style="width: ${middlePercent}%">
+                                        ${middlePercent > 10 ? middlePercent + '%' : ''}
+                                    </div>
+                                </div>
+                                <div class="bar-value">${data.levelCounts.Middle}</div>
+                            </div>
+                            <div class="bar-item">
+                                <div class="bar-label">Senior</div>
+                                <div class="bar-wrapper">
+                                    <div class="bar-fill senior" style="width: ${seniorPercent}%">
+                                        ${seniorPercent > 10 ? seniorPercent + '%' : ''}
+                                    </div>
+                                </div>
+                                <div class="bar-value">${data.levelCounts.Senior}</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    ${data.topWeaknesses.length > 0 ? `
+                        <div class="chart-container">
+                            <div class="chart-title">⚠️ Топ слабых сторон команды</div>
+                            <ul class="summary-list weaknesses">
+                                ${data.topWeaknesses.map(w => `
+                                    <li>${w.weakness} <span style="color: #999;">(${w.count} раз)</span></li>
+                                `).join('')}
+                            </ul>
+                        </div>
+                    ` : ''}
+
+                    ${data.topStrengths.length > 0 ? `
+                        <div class="chart-container">
+                            <div class="chart-title">✅ Топ сильных сторон команды</div>
+                            <ul class="summary-list strengths">
+                                ${data.topStrengths.map(s => `
+                                    <li>${s.strength} <span style="color: #999;">(${s.count} раз)</span></li>
+                                `).join('')}
+                            </ul>
+                        </div>
+                    ` : ''}
+                `;
+
+                // Add expert summary if available
+                if (data.expertSummary) {
+                    html += `
+                        <div class="expert-section">
+                            <div class="expert-section-title">📋 Краткое резюме</div>
+                            <div class="expert-text">${escapeHtml(data.expertSummary.executiveSummary)}</div>
+                        </div>
+
+                        <div class="expert-section">
+                            <div class="expert-section-title">🔍 Детальный анализ</div>
+                            <div class="expert-text">${escapeHtml(data.expertSummary.detailedAnalysis).replace(/\n/g, '<br>')}</div>
+                        </div>
+
+                        ${data.expertSummary.keyFindings && data.expertSummary.keyFindings.length > 0 ? `
+                            <div class="expert-section">
+                                <div class="expert-section-title">💡 Ключевые находки</div>
+                                ${data.expertSummary.keyFindings.map(finding => `
+                                    <div class="finding-item">
+                                        <div class="finding-title">${escapeHtml(finding.title)}</div>
+                                        <div class="finding-description">${escapeHtml(finding.description)}</div>
+                                        ${finding.examples && finding.examples.length > 0 ? `
+                                            <div class="finding-examples">
+                                                <strong style="font-size: 12px; color: #999;">Примеры:</strong>
+                                                <ul>
+                                                    ${finding.examples.map(ex => `<li>${escapeHtml(ex)}</li>`).join('')}
+                                                </ul>
+                                            </div>
+                                        ` : ''}
+                                    </div>
+                                `).join('')}
+                            </div>
+                        ` : ''}
+
+                        ${data.expertSummary.actionPlan && data.expertSummary.actionPlan.length > 0 ? `
+                            <div class="expert-section">
+                                <div class="expert-section-title">📅 План действий</div>
+                                ${data.expertSummary.actionPlan.map(action => `
+                                    <div class="action-item">
+                                        <div class="action-header">
+                                            <div class="action-title">${escapeHtml(action.action)}</div>
+                                            <span class="action-priority ${action.priority.toLowerCase().replace('высокий', 'high').replace('средний', 'medium').replace('низкий', 'low')}">${escapeHtml(action.priority)}</span>
+                                        </div>
+                                        <div class="action-details">
+                                            <strong>Целевая группа:</strong> ${escapeHtml(action.target)} | 
+                                            <strong>Срок:</strong> ${escapeHtml(action.timeline)}
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        ` : ''}
+
+                        ${data.expertSummary.recommendations && data.expertSummary.recommendations.length > 0 ? `
+                            <div class="expert-section">
+                                <div class="expert-section-title">🎯 Рекомендации</div>
+                                ${data.expertSummary.recommendations.map(rec => `
+                                    <div class="recommendation-item">${escapeHtml(rec)}</div>
+                                `).join('')}
+                            </div>
+                        ` : ''}
+                    `;
+                } else {
+                    // Fallback to simple insights if expert summary is not available
+                    html += `
+                        <div class="insight-card">
+                            <div class="insight-title">💡 Ключевые выводы</div>
+                            <div class="insight-text">
+                                ${generateInsights(data)}
+                            </div>
+                        </div>
+                    `;
+                }
+
+                container.innerHTML = html;
+            } catch (error) {
+                container.innerHTML = `<div class="error">Ошибка: ${error.message}</div>`;
+            }
+        }
+
+        function loadExpenses() {
+            const container = document.getElementById('expensesContent');
+            const billingUrl = 'https://platform.openai.com/account/billing';
+            container.innerHTML = `
+                <p style="font-size: 15px; color: var(--tg-theme-hint-color,#666); line-height: 1.5; margin-bottom: 24px; text-align: center;">
+                    Баланс и оплата — в личном кабинете OpenAI.
+                </p>
+                <a href="${billingUrl}" target="_blank" rel="noopener" class="btn-external" onclick="openBilling(event)">
+                    OpenAI
+                </a>
+            `;
+        }
+
+        function generateInsights(data) {
+            const total = data.levelCounts.Junior + data.levelCounts.Middle + data.levelCounts.Senior;
+            const seniorPercent = total > 0 ? (data.levelCounts.Senior / total) * 100 : 0;
+            const avgScore = data.avgScore;
+
+            let insights = [];
+
+            if (seniorPercent >= 50) {
+                insights.push('✅ Отличная команда! Больше половины сотрудников имеют уровень Senior.');
+            } else if (seniorPercent >= 30) {
+                insights.push('✅ Хороший баланс команды. Есть потенциал для роста.');
+            } else {
+                insights.push('⚠️ Рекомендуется обратить внимание на развитие команды. Много сотрудников нуждаются в обучении.');
+            }
+
+            if (avgScore >= 70) {
+                insights.push('📈 Средний балл команды высокий. Команда показывает отличные результаты.');
+            } else if (avgScore >= 50) {
+                insights.push('📊 Средний балл команды средний. Есть место для улучшения.');
+            } else {
+                insights.push('📉 Средний балл команды низкий. Необходимо провести дополнительное обучение.');
+            }
+
+            if (data.topWeaknesses.length > 0) {
+                const topWeakness = data.topWeaknesses[0];
+                insights.push(`🎯 Основная область для улучшения: ${topWeakness.weakness}. Рекомендуется провести тренинг по этой теме.`);
+            }
+
+            return insights.map(i => `<div style="margin-bottom: 8px;">${i}</div>`).join('');
+        }
+
+        async function showAttemptDetail(attemptId, type) {
+            currentAttemptId = attemptId;
+            const listView = document.getElementById('listView');
+            const detailView = document.getElementById('detailView');
+            const detailsContainer = document.getElementById('attemptDetails');
+
+            listView.style.display = 'none';
+            detailView.classList.add('active');
+            detailsContainer.innerHTML = '<div class="loading">Загрузка...</div>';
+
+            try {
+                const url = (type === 'training')
+                    ? API_BASE + '/api/admin/training-sessions/' + (typeof attemptId === 'string' ? attemptId.replace(/^t-/, '') : attemptId)
+                    : API_BASE + '/api/admin/attempts/' + attemptId;
+                const response = await fetch(url);
+                const attempt = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(attempt.error || 'Ошибка загрузки');
+                }
+
+                const score = attempt.totalScore;
+                const scoreDisplay = score != null
+                    ? score.toFixed(1) + '/100'
+                    : (attempt.evaluationError ? 'Ошибка оценки' : 'Н/Д') + '/100';
+                const scoreClass = score != null ? (score >= 76 ? 'high' : score >= 50 ? 'medium' : 'low') : 'unknown';
+                const qualityTag = attempt.qualityTag || (score != null ? (score >= 76 ? 'Хорошо' : score >= 50 ? 'Средне' : 'Плохо') : null);
+                const badgeClass = qualityTag === 'Хорошо' ? 'good' : qualityTag === 'Средне' ? 'average' : qualityTag === 'Плохо' ? 'poor' : '';
+                let html = `
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="card-title">${escapeHtml(attempt.userName)}</div>
+                            ${qualityTag ? `<span class="badge ${badgeClass}">${escapeHtml(qualityTag)}</span>` : ''}
+                        </div>
+                        <div class="score ${scoreClass}">${scoreDisplay}</div>
+                        <div class="meta">
+                            Начало: ${new Date(attempt.startedAt).toLocaleString('ru-RU')}<br>
+                            Завершение: ${new Date(attempt.finishedAt).toLocaleString('ru-RU')}
+                        </div>
+                    </div>
+                `;
+
+                // Overall summary
+                const strengths = attempt.strengths || [];
+                const weaknesses = attempt.weaknesses || [];
+                const recommendations = attempt.recommendations || [];
+                if (strengths.length > 0 || weaknesses.length > 0 || recommendations.length > 0) {
+                    html += '<div class="summary-section">';
+                    html += '<h2 class="summary-title">Общая оценка</h2>';
+                    
+                    if (strengths.length > 0) {
+                        html += '<div class="summary-block">';
+                        html += '<div class="summary-block-title">✅ Сильные стороны</div>';
+                        html += '<ul class="summary-list">';
+                        strengths.forEach(s => {
+                            html += `<li>${escapeHtml(s)}</li>`;
+                        });
+                        html += '</ul></div>';
+                    }
+
+                    if (weaknesses.length > 0) {
+                        html += '<div class="summary-block">';
+                        html += '<div class="summary-block-title">⚠️ Слабые стороны</div>';
+                        html += '<ul class="summary-list">';
+                        weaknesses.forEach(w => {
+                            html += `<li>${escapeHtml(w)}</li>`;
+                        });
+                        html += '</ul></div>';
+                    }
+
+                    if (recommendations.length > 0) {
+                        html += '<div class="summary-block">';
+                        html += '<div class="summary-block-title">💡 Рекомендации</div>';
+                        html += '<ul class="summary-list">';
+                        recommendations.forEach(r => {
+                            html += `<li>${escapeHtml(r)}</li>`;
+                        });
+                        html += '</ul></div>';
+                    }
+
+                    html += '</div>';
+                }
+
+                // Steps details
+                html += '<h2 style="margin-bottom: 16px; font-size: 16px; font-weight: 600;">Детали по вопросам</h2>';
+
+                const steps = attempt.steps || [];
+                if (steps.length === 0 && attempt.evaluationError) {
+                    html += `<div class="error" style="margin-top: 8px;">${escapeHtml(attempt.evaluationError)}</div>`;
+                }
+                steps.forEach((step, index) => {
+                    const stepScore = step.score != null ? step.score : null;
+                    const scoreClass = stepScore != null
+                        ? (stepScore >= 76 ? 'high' : stepScore >= 50 ? 'medium' : 'low')
+                        : 'unknown';
+                    const scoreDisplay = stepScore != null ? stepScore.toFixed(0) : 'Н/Д';
+                    const showOptimal = !!step.betterExample;
+                    html += `
+                        <div class="step-detail">
+                            <div class="step-header">
+                                <div class="step-number">Вопрос ${step.order}</div>
+                                <div class="step-score ${scoreClass}">${scoreDisplay}/100</div>
+                            </div>
+
+                            <div class="question-box">
+                                <div class="question-label">Сообщение клиента</div>
+                                <div class="question-text">${escapeHtml(step.customerMessage)}</div>
+                            </div>
+
+                            <div class="answer-box">
+                                <div class="answer-label">Ответ менеджера</div>
+                                <div class="answer-text">${escapeHtml(step.answer)}</div>
+                            </div>
+
+                            ${step.feedback ? `
+                                <div class="feedback-box">
+                                    <div class="feedback-label">Оценка</div>
+                                    <div class="feedback-text">${escapeHtml(step.feedback)}</div>
+                                </div>
+                            ` : ''}
+
+                            ${showOptimal ? `
+                                <div class="better-example-box">
+                                    <div class="better-example-label">Лучший ответ</div>
+                                    <div class="better-example-text">${escapeHtml(step.betterExample)}</div>
+                                </div>
+                            ` : ''}
+
+                            ${(step.criteriaScores && Object.keys(step.criteriaScores).length > 0) ? `
+                                <div style="margin-top: 8px;">
+                                    <div style="font-size: 12px; color: #999; margin-bottom: 4px;">Оценка по критериям:</div>
+                                    <div class="criteria-scores">
+                                        ${Object.entries(step.criteriaScores).map(([criterion, score]) => 
+                                            `<span class="criteria-badge">${criterion}: ${score}/5</span>`
+                                        ).join('')}
+                                    </div>
+                                </div>
+                            ` : ''}
+                        </div>
+                    `;
+                });
+
+                detailsContainer.innerHTML = html;
+            } catch (error) {
+                detailsContainer.innerHTML = `<div class="error">Ошибка: ${error.message}</div>`;
+            }
+        }
+
+        function showListView() {
+            const listView = document.getElementById('listView');
+            const detailView = document.getElementById('detailView');
+            
+            listView.style.display = 'block';
+            detailView.classList.remove('active');
+            currentAttemptId = null;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function openBilling(e) {
+            const url = e.currentTarget.href || 'https://platform.openai.com/account/billing';
+            const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
+            if (tg && tg.openLink) {
+                e.preventDefault();
+                tg.openLink(url);
+            }
+        }
+
+        // Make functions global
+        window.loadAttempts = loadAttempts;
+        window.showAttemptDetail = showAttemptDetail;
+        window.showListView = showListView;
+        window.switchTab = switchTab;
+        window.toggleLevelFilter = toggleLevelFilter;
+        window.toggleProblemFilter = toggleProblemFilter;
+        window.toggleProblemFilterByChip = toggleProblemFilterByChip;
+        window.clearAllFilters = clearAllFilters;
+        window.applyFilters = applyFilters;
+        window.toggleAdvancedFilters = toggleAdvancedFilters;
+        window.initializeProblemFilters = initializeProblemFilters;
+        window.updateFilterCounts = updateFilterCounts;
+
+        init();
+    </script>
+</body>
+</html>

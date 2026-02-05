@@ -1,0 +1,105 @@
+{
+  "id": "avito_7913124074",
+  "title": "Chery Arrizo 8 1.6 AMT, 2023",
+  "price_rub": 1710000,
+  "price_assessment": {
+    "avito_estimated_price_rub": 1706000,
+    "difference_rub": 4000,
+    "assessment_label": "соответствует оценке"
+  },
+  "brand": "Chery",
+  "model": "Arrizo 8",
+  "generation": "I",
+  "year": 2023,
+  "mileage_km": 97000,
+  "condition": "б/у",
+  "owners_count": null,
+  "vin": {
+    "available": true,
+    "value": null
+  },
+  "pts": {
+    "type": "электронный",
+    "original": true
+  },
+  "accidents": "не указаны, по отчету Автотеки — без серьёзных ДТП",
+  "history": {
+    "usage": "не такси, не каршеринг",
+    "records_count": 2
+  },
+  "technical": {
+    "engine": {
+      "type": "бензин",
+      "volume_l": 1.6,
+      "code": "1.6 TGDI",
+      "power_hp": 186
+    },
+    "transmission": "робот (7-ступенчатый DCT)",
+    "drive": "передний",
+    "body_type": "седан",
+    "color": "чёрный",
+    "steering_wheel": "левый",
+    "eco_class": "Евро-5"
+  },
+  "trim": "Ultimate",
+  "equipment": {
+    "comfort": ["кожаный салон", "климат-контроль", "вентиляция сидений", "массаж передних сидений", "электропривод сидений", "подогрев сидений", "подогрев руля"],
+    "multimedia": ["цифровая приборная панель", "большой мультимедийный экран", "Bluetooth", "Apple CarPlay / Android Auto"],
+    "safety": ["подушки безопасности", "мониторинг слепых зон", "камера 360°"],
+    "assistants": ["интеллектуальная парковка", "круиз-контроль"]
+  },
+  "description": {
+    "seller_text": "Не такси, не каршеринг. Строго наличными, цена без НДС, с НДС +11%. Продается Chery Arrizo 8 2023. Флагманский седан бизнес-класса с футуристичным дизайном и максимальным оснащением.",
+    "key_points": ["богатая комплектация Ultimate", "современный дизайн", "высокий уровень комфорта", "подходит требовательному водителю"],
+    "condition_note": "Автомобиль в идеальном состоянии",
+    "service_history": "обслуживался у официального дилера",
+    "diagnostics": "прошёл проверку по Автотеке",
+    "included": ["юридически чист", "готов к осмотру", "готов к сделке"]
+  },
+  "deal_terms": {
+    "payment": {
+      "cash_only": true,
+      "nds": {
+        "included": false,
+        "with_nds_price_increase_percent": 11
+      }
+    },
+    "credit": {
+      "available": true,
+      "monthly_payment_from_rub": 36796,
+      "banks_count": 8,
+      "calculator": {
+        "min_price": 1710000,
+        "down_payment_options": [0, 300000, 650000],
+        "terms_years": [1, 2, 3, 4, 5, 6, 7]
+      }
+    },
+    "trade_in": true,
+    "buyout": true
+  },
+  "ownership_cost": {
+    "fuel_rub_per_year": 58158,
+    "insurance_osago_rub": 12842,
+    "transport_tax_rub": 9300,
+    "total_rub_per_year": 80282
+  },
+  "location": {
+    "city": "Москва",
+    "address": "ул. Щёлковская",
+    "metro": [
+      { "name": "Щёлковская", "time_walk_min": 5 },
+      { "name": "Строгино", "time_transport_min": 20 }
+    ],
+    "district": "центр города",
+    "inspection_place": "подземная парковка ТЦ"
+  },
+  "seller": {
+    "type": "дилер",
+    "platform_status": "только на Avito",
+    "verified": true
+  },
+  "source": {
+    "platform": "avito",
+    "url": "https://www.avito.ru/moskva/avtomobili/chery_arrizo_8_1.6_amt_2023_97_000_km_7913124074"
+  }
+}
