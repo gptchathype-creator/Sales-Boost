@@ -2,6 +2,8 @@
 # Stage 1: Build
 FROM node:20-slim AS builder
 
+RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # Install ALL dependencies (including dev for tsc)
@@ -21,6 +23,8 @@ RUN npm run build
 
 # Stage 2: Production
 FROM node:20-slim
+
+RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 

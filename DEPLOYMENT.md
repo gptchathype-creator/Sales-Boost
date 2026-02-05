@@ -11,21 +11,21 @@
 
 ---
 
-## Переменные окружения
+## Переменные окружения (обязательно!)
 
-В Railway: **Project** → **Variables** → добавьте:
+В Railway: **Project** → **Variables** → **Add Variable**. Добавьте **все** переменные:
 
-| Переменная | Обязательно | Пример |
-|------------|-------------|--------|
-| `BOT_TOKEN` | ✅ | Токен от @BotFather |
-| `OPENAI_API_KEY` | ✅ | Ваш ключ OpenAI |
-| `ADMIN_TELEGRAM_IDS` | ✅ | `123456789,@username` |
-| `DATABASE_URL` | ✅ | `file:/data/dev.db` |
-| `MINI_APP_URL` | ✅ | `https://ваш-проект.railway.app` |
-| `ALLOW_DEV_ADMIN` | ❌ | `false` (в production) |
-| `TTS_PROVIDER` | ❌ | `openai` (по умолчанию) |
+| Переменная | Значение |
+|------------|----------|
+| `BOT_TOKEN` | Токен от @BotFather |
+| `OPENAI_API_KEY` | Ваш ключ OpenAI |
+| `ADMIN_TELEGRAM_IDS` | `123456789` или `@username` |
+| `DATABASE_URL` | `file:/data/dev.db` |
+| `MINI_APP_URL` | `https://ваш-домен.railway.app` |
 
-**Важно:** `MINI_APP_URL` укажите после первого деплоя — Railway покажет URL в разделе **Settings** → **Networking** → **Generate Domain**.
+**Без `DATABASE_URL` приложение не запустится** — Prisma не найдёт базу данных.
+
+`MINI_APP_URL` укажите после первого деплоя — Railway покажет URL в **Settings** → **Networking** → **Generate Domain**.
 
 ---
 
