@@ -2,12 +2,20 @@ import express from 'express';
 import https from 'https';
 import http from 'http';
 import fs from 'fs';
+import type { Telegraf } from 'telegraf';
 import { prisma } from './db';
 import { config } from './config';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
 const app = express();
+
+/** Path for Telegram webhook (production). Call registerTelegramWebhook(bot) before startServer(). */
+export const WEBHOOK_PATH = '/telegram-webhook';
+
+export function registerTelegramWebhook(bot: Telegraf): void {
+  app.use(bot.webhookCallback(WEBHOOK_PATH));
+}
 app.use(express.json());
 
 // Resolve absolute path to public/index.html (works for tsx and compiled)
