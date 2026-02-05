@@ -8,7 +8,7 @@ import { handleSettings, handleSettingsCallback } from './handlers/settings';
 import { sendCSV, isAdmin } from './utils';
 import { initCommandsMenu, setDefaultCommands, setChatCommands } from './commandsMenu';
 import { prisma } from './db';
-import { startServer, registerTelegramWebhook, WEBHOOK_PATH } from './server';
+import { startServer } from './server';
 import { startTunnel } from './tunnel';
 import { registerManagerMessageHandlers } from './bot';
 import { isTtsEnabled } from './voice/tts';
@@ -339,12 +339,7 @@ async function main() {
     const isProduction = miniUrl.startsWith('https://') && !miniUrl.includes('localhost');
     (config as any).miniAppUrl = miniUrl || `http://localhost:${config.port}`;
 
-    // 1. Production: register webhook before server starts (avoids 409, works with replicas)
-    if (isProduction) {
-      registerTelegramWebhook(bot);
-    }
-
-    // 2. Start HTTP server
+    // 1. Start HTTP server
     await startServer();
     console.log('[OK] Web server: http://localhost:' + config.port);
 
@@ -381,17 +376,31 @@ async function main() {
     // Unified text + voice handlers for manager training dialog
     registerManagerMessageHandlers(bot);
 
-    if (isProduction) {
-      // Webhook mode: no polling, no 409. Telegram sends updates to our URL.
-      const webhookUrl = `${miniUrl}${WEBHOOK_PATH}`;
-      await bot.telegram.setWebhook(webhookUrl, { drop_pending_updates: true });
-      console.log('[OK] Bot webhook: ' + webhookUrl);
+    // Polling: delete any webhook first, then launch
+    await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+
+    const maxRetries = 8;
+    const retryDelayMs = 15000;
+    let launched = false;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        await bot.launch({ dropPendingUpdates: true });
+        launched = true;
+        break;
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const is409 = typeof msg === 'string' && msg.includes('409');
+        if (is409 && attempt < maxRetries) {
+          console.warn(`[BOT] 409 Conflict (${attempt}/${maxRetries}). Остановите локальный бот. Повтор через ${retryDelayMs / 1000}с...`);
+          await new Promise((r) => setTimeout(r, retryDelayMs));
+        } else {
+          throw err;
+        }
+      }
+    }
+
+    if (launched) {
       console.log('[OK] Bot is running. Send /start or /admin in Telegram.');
-    } else {
-      // Polling mode (dev)
-      await bot.telegram.deleteWebhook({ drop_pending_updates: true });
-      await bot.launch({ dropPendingUpdates: true });
-      console.log('[OK] Bot is running (polling). Send /start or /admin in Telegram.');
     }
     console.log('      TTS:', isTtsEnabled() ? 'enabled (OpenAI)' : 'disabled');
 
@@ -402,7 +411,23 @@ async function main() {
     if (error instanceof Error && error.stack) {
       console.error(error.stack);
     }
-    process.exit(1);
+    const msg = error instanceof Error ? error.message : String(error);
+    if (msg.includes('409')) {
+      console.error('[BOT] Mini App и /health работают. Остановите ВСЕ локальные экземпляры бота (npm run dev) и сделайте Redeploy.');
+      // Keep process alive — HTTP server stays up
+      const retryInterval = setInterval(async () => {
+        try {
+          await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+          await bot.launch({ dropPendingUpdates: true });
+          clearInterval(retryInterval);
+          console.log('[OK] Bot подключился после повтора.');
+        } catch {
+          // Will retry again
+        }
+      }, 60000);
+    } else {
+      process.exit(1);
+    }
   }
 }
 
