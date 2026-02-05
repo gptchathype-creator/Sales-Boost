@@ -44,4 +44,4 @@ COPY --from=builder /app/data ./data
 ENV NODE_ENV=production
 EXPOSE 3000
 
-CMD npx prisma migrate deploy && node dist/index.js
+CMD npx prisma migrate deploy && node dist/src/index.js
