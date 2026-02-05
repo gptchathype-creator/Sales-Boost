@@ -376,10 +376,35 @@ async function main() {
     // Unified text + voice handlers for manager training dialog
     registerManagerMessageHandlers(bot);
 
-    await bot.launch({ dropPendingUpdates: true });
-    console.log('[OK] Bot is running. Send /start or /admin in Telegram.');
-    console.log('      Site in browser: http://localhost:' + config.port);
-    console.log('      TTS:', isTtsEnabled() ? 'enabled (OpenAI)' : 'disabled');
+    // Remove webhook if set (e.g. from previous deployment) — required for polling
+    await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+
+    // Retry bot.launch on 409 (another instance polling) — keeps HTTP server up for Mini App
+    const maxRetries = 5;
+    const retryDelayMs = 10000;
+    let launched = false;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        await bot.launch({ dropPendingUpdates: true });
+        launched = true;
+        break;
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const is409 = typeof msg === 'string' && msg.includes('409');
+        if (is409 && attempt < maxRetries) {
+          console.warn(`[BOT] 409 Conflict (attempt ${attempt}/${maxRetries}). Retrying in ${retryDelayMs / 1000}s...`);
+          await new Promise((r) => setTimeout(r, retryDelayMs));
+        } else {
+          throw err;
+        }
+      }
+    }
+
+    if (launched) {
+      console.log('[OK] Bot is running. Send /start or /admin in Telegram.');
+      console.log('      Site in browser: http://localhost:' + config.port);
+      console.log('      TTS:', isTtsEnabled() ? 'enabled (OpenAI)' : 'disabled');
+    }
 
     process.once('SIGINT', () => bot.stop('SIGINT'));
     process.once('SIGTERM', () => bot.stop('SIGTERM'));
@@ -388,7 +413,24 @@ async function main() {
     if (error instanceof Error && error.stack) {
       console.error(error.stack);
     }
-    process.exit(1);
+    // Don't exit on bot 409 — HTTP server stays up, Mini App works
+    const msg = error instanceof Error ? error.message : String(error);
+    if (msg.includes('409')) {
+      console.error('[BOT] Bot polling failed. Mini App and /health remain available.');
+      console.error('[BOT] Retrying bot every 60s until another instance releases...');
+      const retryInterval = setInterval(async () => {
+        try {
+          await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+          await bot.launch({ dropPendingUpdates: true });
+          clearInterval(retryInterval);
+          console.log('[OK] Bot connected after retry.');
+        } catch {
+          // Ignore, will retry again
+        }
+      }, 60000);
+    } else {
+      process.exit(1);
+    }
   }
 }
 
