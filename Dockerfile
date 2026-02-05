@@ -1,26 +1,43 @@
 # Sales Boost Bot - Railway deployment
-FROM node:20-slim
+# Stage 1: Build
+FROM node:20-slim AS builder
 
 WORKDIR /app
 
-# Install dependencies
+# Install ALL dependencies (including dev for tsc)
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+RUN npm ci
 
 # Prisma
 COPY prisma ./prisma/
 RUN npx prisma generate
 
-# Build
+# Build TypeScript
 COPY tsconfig.json ./
 COPY src ./src/
 COPY public ./public/
 COPY data ./data/
 RUN npm run build
 
-# Production
+# Stage 2: Production
+FROM node:20-slim
+
+WORKDIR /app
+
+# Production deps only
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+
+# Prisma client
+COPY prisma ./prisma/
+RUN npx prisma generate
+
+# Copy built output from builder
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/data ./data
+
 ENV NODE_ENV=production
 EXPOSE 3000
 
-# Migrate and start (migrations run on each deploy)
 CMD npx prisma migrate deploy && node dist/index.js
