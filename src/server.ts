@@ -14,7 +14,18 @@ const app = express();
 export const WEBHOOK_PATH = '/telegram-webhook';
 
 export function registerTelegramWebhook(bot: Telegraf): void {
-  app.use(bot.webhookCallback(WEBHOOK_PATH));
+  app.post(WEBHOOK_PATH, async (req, res) => {
+    try {
+      if (!req.body) {
+        console.error('[WEBHOOK] No body');
+        return res.status(400).end();
+      }
+      await bot.handleUpdate(req.body, res);
+    } catch (err) {
+      console.error('[WEBHOOK] Error:', err);
+      res.status(500).end();
+    }
+  });
 }
 app.use(express.json());
 
