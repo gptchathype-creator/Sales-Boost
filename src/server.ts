@@ -527,14 +527,30 @@ app.get('/api/admin/attempts', async (req, res) => {
 // Get team summary
 app.get('/api/admin/summary', async (req, res) => {
   try {
-    const attempts = await prisma.attempt.findMany({
-      where: { status: 'completed', totalScore: { not: null } },
-      include: {
-        user: true,
-      },
-    });
+    const [attempts, trainingSessions] = await Promise.all([
+      prisma.attempt.findMany({
+        where: { status: 'completed', totalScore: { not: null } },
+        include: {
+          user: true,
+        },
+      }),
+      prisma.trainingSession.findMany({
+        where: {
+          status: { in: ['completed', 'failed'] },
+          OR: [
+            { assessmentScore: { not: null } },
+            { failureReason: { not: null } },
+          ],
+        },
+        include: {
+          user: true,
+        },
+      }),
+    ]);
 
-    if (attempts.length === 0) {
+    const totalItems = attempts.length + trainingSessions.length;
+
+    if (totalItems === 0) {
       return res.json({
         totalAttempts: 0,
         avgScore: 0,
@@ -545,8 +561,15 @@ app.get('/api/admin/summary', async (req, res) => {
       });
     }
 
-    const totalScore = attempts.reduce((sum, a) => sum + (a.totalScore || 0), 0);
-    const avgScore = totalScore / attempts.length;
+    const totalScoreAttempts = attempts.reduce((sum, a) => sum + (a.totalScore || 0), 0);
+    const totalScoreTrainings = trainingSessions.reduce((sum, s) => {
+      if (s.assessmentScore != null) return sum + s.assessmentScore;
+      if (s.status === 'failed') return sum; // оценка не проставлена — не увеличиваем сумму
+      return sum;
+    }, 0);
+
+    const totalScore = totalScoreAttempts + totalScoreTrainings;
+    const avgScore = totalItems > 0 ? totalScore / totalItems : 0;
 
     const levelCounts = {
       Junior: 0,
@@ -575,6 +598,25 @@ app.get('/api/admin/summary', async (req, res) => {
       }
     });
 
+    // Добавляем тренировки: слабые стороны из mistakes, сильные из improvements (если есть)
+    trainingSessions.forEach((s) => {
+      if (!s.assessmentJson) return;
+      const data = JSON.parse(s.assessmentJson) as {
+        mistakes?: string[];
+        improvements?: string[];
+        quality?: string;
+      };
+      const mistakes = Array.isArray(data.mistakes) ? data.mistakes : [];
+      const improvements = Array.isArray(data.improvements) ? data.improvements : [];
+
+      mistakes.forEach((w: string) => {
+        allWeaknesses[w] = (allWeaknesses[w] || 0) + 1;
+      });
+      improvements.forEach((s: string) => {
+        allStrengths[s] = (allStrengths[s] || 0) + 1;
+      });
+    });
+
     const topWeaknesses = Object.entries(allWeaknesses)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 5)
@@ -587,19 +629,39 @@ app.get('/api/admin/summary', async (req, res) => {
 
     // Prepare data for expert summary
     const teamData = {
-      totalAttempts: attempts.length,
+      totalAttempts: totalItems,
       avgScore,
       levelCounts,
       topWeaknesses,
       topStrengths,
-      attempts: attempts.map(a => ({
-        userName: a.user.fullName,
-        score: a.totalScore || 0,
-        level: a.level || '',
-        strengths: a.strengthsJson ? JSON.parse(a.strengthsJson) : [],
-        weaknesses: a.weaknessesJson ? JSON.parse(a.weaknessesJson) : [],
-        recommendations: a.recommendationsJson ? JSON.parse(a.recommendationsJson) : [],
-      })),
+      attempts: [
+        ...attempts.map(a => ({
+          userName: a.user.fullName,
+          score: a.totalScore || 0,
+          level: a.level || '',
+          strengths: a.strengthsJson ? JSON.parse(a.strengthsJson) : [],
+          weaknesses: a.weaknessesJson ? JSON.parse(a.weaknessesJson) : [],
+          recommendations: a.recommendationsJson ? JSON.parse(a.recommendationsJson) : [],
+        })),
+        ...trainingSessions.map(s => {
+          const data = s.assessmentJson
+            ? (JSON.parse(s.assessmentJson) as {
+                mistakes?: string[];
+                improvements?: string[];
+                quality?: string;
+              })
+            : { mistakes: [], improvements: [], quality: '' };
+          const score = s.assessmentScore ?? (s.status === 'failed' ? 0 : 0);
+          return {
+            userName: s.user.fullName,
+            score,
+            level: '',
+            strengths: [],
+            weaknesses: data.mistakes || [],
+            recommendations: data.improvements || [],
+          };
+        }),
+      ],
     };
 
     // Generate expert summary
@@ -613,7 +675,7 @@ app.get('/api/admin/summary', async (req, res) => {
     }
 
     res.json({
-      totalAttempts: attempts.length,
+      totalAttempts: totalItems,
       avgScore: Math.round(avgScore * 10) / 10,
       levelCounts,
       topWeaknesses,
