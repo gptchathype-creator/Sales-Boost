@@ -27,12 +27,19 @@ model User {
 model TrainingSession {
   id               Int       @id @default(autoincrement())
   userId           Int
-  status           String    // "assigned" | "in_progress" | "completed" | "cancelled"
-  stateJson        String?   // JSON: { stage, checklist, notes, client_turns }
+  // "assigned" | "in_progress" | "completed" | "cancelled" | "failed"
+  status           String
+  // JSON: extended dialog state (stage, checklist, notes, client_turns, dialog_health, topic_lifecycle, loop_guard, strictness, fact_context)
+  stateJson        String?
   createdAt        DateTime  @default(now())
   completedAt      DateTime?
-  assessmentScore  Float?    // 0-100, from generateTrainingAssessment
-  assessmentJson   String?   // JSON: { score, quality, improvements, mistakes }
+  // Legacy assessment fields (kept for backward compatibility)
+  assessmentScore  Float?    // 0-100
+  assessmentJson   String?   // JSON: legacy training assessment
+  // New evaluation fields
+  failureReason    String?   // "poor_communication" | "ignored_questions" | "rude_language" | other free-form text
+  evaluationJson   String?   // Strict JSON from post-dialog evaluator
+  totalScore       Float?    // 0-100, overall result from evaluator
 
   user     User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   messages DialogMessage[]
@@ -48,6 +55,7 @@ model DialogMessage {
   source    String   @default("text") // "text" | "voice"
   voiceFileId      String?
   voiceDurationSec Int?
+  qualitySignalJson String? // JSON: { very_short, nonsense, profanity, filler_count, anglicism_count }
   createdAt DateTime @default(now())
 
   session TrainingSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)

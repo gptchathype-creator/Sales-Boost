@@ -164,7 +164,8 @@ app.get('/api/admin/training-sessions/:sessionId', async (req, res) => {
   try {
     const sessionId = parseInt(req.params.sessionId);
     const session = await prisma.trainingSession.findUnique({
-      where: { id: sessionId, status: 'completed', assessmentScore: { not: null } },
+      // Показываем как завершённые, так и досрочно прерванные тренировки
+      where: { id: sessionId },
       include: {
         user: true,
         messages: { orderBy: { createdAt: 'asc' as const } },
@@ -175,11 +176,21 @@ app.get('/api/admin/training-sessions/:sessionId', async (req, res) => {
       return res.status(404).json({ error: 'Session not found' });
     }
 
-    const data = session.assessmentJson ? JSON.parse(session.assessmentJson) : {};
-    const score = session.assessmentScore ?? 0;
-    const level = session.assessmentScore != null ? scoreToLevel(session.assessmentScore) : null;
-    const qualityTag = scoreToQualityTag(score);
-    const assessmentSteps = (data.steps || []) as Array<{ step_order: number; step_score: number; feedback?: string; better_example?: string }>;
+    const hasAssessment = session.assessmentScore != null && session.assessmentJson != null;
+    const isFailed = session.status === 'failed';
+    const data = hasAssessment ? JSON.parse(session.assessmentJson as string) : {};
+    const score = hasAssessment ? (session.assessmentScore as number) : 0;
+    const level = hasAssessment ? scoreToLevel(score) : null;
+    const qualityTag = isFailed ? 'Плохо' : scoreToQualityTag(score);
+    const assessmentSteps = (data.steps || []) as Array<{
+      step_order: number;
+      step_score: number;
+      feedback?: string;
+      better_example?: string;
+    }>;
+    const globalImprovements: string[] = Array.isArray(data.improvements)
+      ? (data.improvements as string[])
+      : [];
 
     const steps = (() => {
       const msgs = session.messages;
@@ -195,13 +206,33 @@ app.get('/api/admin/training-sessions/:sessionId', async (req, res) => {
       }
       return pairs.map((p) => {
         const stepData = assessmentSteps.find((s) => s.step_order === p.order);
+
+        // Если модель не вернула покомпонентную оценку для этого шага,
+        // не оставляем "Н/Д": считаем, что ответ = 0/100 и даём общую рекомендацию.
+        if (!stepData) {
+          const genericImprovement =
+            globalImprovements[0] ||
+            'Ответить подробнее и сфокусироваться на пользе для клиента и следующем шаге.';
+          return {
+            order: p.order,
+            customerMessage: p.customerMessage,
+            answer: p.answer,
+            score: 0,
+            feedback:
+              'Этот ответ не был отдельно оценён моделью, но по контексту считается слабым. ' +
+              `Общая рекомендация: ${genericImprovement}`,
+            betterExample: genericImprovement,
+            criteriaScores: {} as Record<string, number>,
+          };
+        }
+
         return {
           order: p.order,
           customerMessage: p.customerMessage,
           answer: p.answer,
-          score: stepData?.step_score ?? null,
-          feedback: stepData?.feedback ?? null,
-          betterExample: stepData?.better_example ?? null,
+          score: stepData.step_score ?? 0,
+          feedback: stepData.feedback ?? null,
+          betterExample: stepData.better_example ?? null,
           criteriaScores: {} as Record<string, number>,
         };
       });
@@ -214,7 +245,7 @@ app.get('/api/admin/training-sessions/:sessionId', async (req, res) => {
       testTitle: 'Тренировка с виртуальным клиентом',
       startedAt: session.createdAt,
       finishedAt: session.completedAt,
-      totalScore: session.assessmentScore,
+      totalScore: hasAssessment ? session.assessmentScore : isFailed ? 0 : null,
       level,
       qualityTag,
       strengths: [],
@@ -384,8 +415,11 @@ app.get('/api/admin/attempts', async (req, res) => {
       }),
       prisma.trainingSession.findMany({
         where: {
-          status: 'completed',
-          assessmentScore: { not: null },
+          status: { in: ['completed', 'failed'] },
+          OR: [
+            { assessmentScore: { not: null } },
+            { failureReason: { not: null } },
+          ],
         },
         include: { user: true },
         orderBy: { completedAt: 'desc' },
@@ -423,8 +457,31 @@ app.get('/api/admin/attempts', async (req, res) => {
     });
 
     const trainingItems = trainingSessions.map(s => {
-      const data = s.assessmentJson ? JSON.parse(s.assessmentJson) : { mistakes: [], improvements: [], quality: '' };
-      const score = s.assessmentScore ?? 0;
+      const hasAssessment = s.assessmentScore != null && s.assessmentJson != null;
+      const data = hasAssessment
+        ? JSON.parse(s.assessmentJson as string)
+        : { mistakes: [], improvements: [], quality: '' };
+      const score = hasAssessment ? (s.assessmentScore as number) : 0;
+      const isFailed = s.status === 'failed';
+
+      let summary: string;
+      if (isFailed) {
+        const reason =
+          s.failureReason === 'rude_language'
+            ? 'Досрочно завершена системой из‑за недопустимой лексики.'
+            : s.failureReason === 'ignored_questions'
+              ? 'Досрочно завершена: менеджер игнорировал вопросы клиента.'
+              : s.failureReason === 'poor_communication'
+                ? 'Досрочно завершена: низкое качество коммуникации.'
+                : 'Тренировка досрочно завершена системой.';
+        summary = reason;
+      } else {
+        summary = buildCardSummary('training', {
+          quality: data.quality,
+          mistakes: data.mistakes,
+          improvements: data.improvements,
+        });
+      }
       return {
         type: 'training' as const,
         id: `t-${s.id}`,
@@ -433,14 +490,14 @@ app.get('/api/admin/attempts', async (req, res) => {
         testTitle: 'Тренировка с виртуальным клиентом',
         startedAt: s.createdAt,
         finishedAt: s.completedAt,
-        totalScore: s.assessmentScore,
-        level: s.assessmentScore != null ? scoreToLevel(s.assessmentScore) : null,
-        qualityTag: scoreToQualityTag(score),
-        summary: buildCardSummary('training', { quality: data.quality, mistakes: data.mistakes, improvements: data.improvements }),
+        totalScore: hasAssessment ? s.assessmentScore : isFailed ? 0 : null,
+        level: hasAssessment ? scoreToLevel(score) : null,
+        qualityTag: isFailed ? 'Плохо' : scoreToQualityTag(score),
+        summary,
         evaluationError: null,
         strengths: [],
-        weaknesses: data.mistakes || [],
-        recommendations: data.improvements || [],
+        weaknesses: (data.mistakes as string[]) || [],
+        recommendations: (data.improvements as string[]) || [],
         steps: [],
       };
     });

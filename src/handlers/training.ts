@@ -116,7 +116,18 @@ export async function handleStartTraining(ctx: Context, strictness: Strictness =
   }
 
   const state = getDefaultState();
-  const stateWithStrictness = { ...state, strictness };
+  // Применяем strictness к расширенному состоянию
+  const max_client_turns =
+    strictness === 'low' ? 7 : strictness === 'high' ? 14 : 10;
+  const stateWithStrictness = {
+    ...state,
+    strictnessState: {
+      strictness,
+      max_client_turns,
+    },
+    // Для обратной совместимости: сохраняем plain strictness тоже
+    strictness,
+  } as any;
   const dealership = buildDealershipFromCar(car);
 
   const session = await prisma.trainingSession.create({
@@ -151,7 +162,7 @@ export async function handleStartTraining(ctx: Context, strictness: Strictness =
         out = await getVirtualClientReply({
           car,
           dealership,
-          state,
+          state: stateWithStrictness,
           manager_last_message: '',
           dialog_history: [],
           strictness,
@@ -163,15 +174,26 @@ export async function handleStartTraining(ctx: Context, strictness: Strictness =
           end_conversation: false,
           reason: '',
           update_state: {
-            stage: state.stage,
-            checklist: state.checklist as Record<string, 'unknown' | 'done' | 'missed'>,
-            notes: state.notes ?? '',
+            stage: stateWithStrictness.stage,
+            checklist: stateWithStrictness.checklist as Record<
+              string,
+              'unknown' | 'done' | 'missed'
+            >,
+            notes: stateWithStrictness.notes ?? '',
             client_turns: 1,
           },
         };
       }
     }
-    const newState = { ...out.update_state, strictness };
+    const newState: any = {
+      ...stateWithStrictness,
+      ...out.update_state,
+      strictnessState: {
+        strictness,
+        max_client_turns,
+      },
+      strictness,
+    };
     await prisma.trainingSession.update({
       where: { id: session.id },
       data: { stateJson: JSON.stringify(newState) },

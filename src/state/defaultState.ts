@@ -27,11 +27,57 @@ export type Stage =
   | 'logistics'
   | 'wrap_up';
 
+export interface DialogHealth {
+  patience: number;   // 0..100
+  trust: number;      // 0..100
+  confusion: number;  // 0..100
+  irritation: number; // 0..100
+}
+
+export interface TopicLifecycleState {
+  asked: boolean;
+  clarified: boolean;
+  closed: boolean;
+}
+
+export type TopicKey =
+  | 'credit'
+  | 'trade_in'
+  | 'visit_time'
+  | 'address_logistics'
+  | 'assortment'
+  | 'inspection_place';
+
+export type TopicLifecycle = Record<TopicKey, TopicLifecycleState>;
+
+export interface LoopGuard {
+  last_client_intent: string;
+  repeated_intent_count: number;
+  unanswered_question_streak: number;
+}
+
+export interface FactContext {
+  buyer_knows: {
+    inspection_place_known: boolean;
+    address_known: boolean;
+  };
+}
+
+export interface StrictnessState {
+  strictness: 'low' | 'medium' | 'high';
+  max_client_turns: number;
+}
+
 export interface DialogState {
   stage: Stage;
   checklist: Checklist;
   notes: string;
   client_turns: number;
+  dialog_health: DialogHealth;
+  topic_lifecycle: TopicLifecycle;
+  loop_guard: LoopGuard;
+  strictnessState: StrictnessState;
+  fact_context: FactContext;
 }
 
 const initialChecklist: Checklist = {
@@ -48,11 +94,56 @@ const initialChecklist: Checklist = {
   discussed_address_and_how_to_get: 'unknown',
 };
 
+const initialDialogHealth: DialogHealth = {
+  patience: 70,
+  trust: 60,
+  confusion: 0,
+  irritation: 0,
+};
+
+const initialTopicLifecycleState: TopicLifecycleState = {
+  asked: false,
+  clarified: false,
+  closed: false,
+};
+
+const initialTopicLifecycle: TopicLifecycle = {
+  credit: { ...initialTopicLifecycleState },
+  trade_in: { ...initialTopicLifecycleState },
+  visit_time: { ...initialTopicLifecycleState },
+  address_logistics: { ...initialTopicLifecycleState },
+  assortment: { ...initialTopicLifecycleState },
+  inspection_place: { ...initialTopicLifecycleState },
+};
+
+const initialLoopGuard: LoopGuard = {
+  last_client_intent: '',
+  repeated_intent_count: 0,
+  unanswered_question_streak: 0,
+};
+
+const initialStrictnessState: StrictnessState = {
+  strictness: 'medium',
+  max_client_turns: 10,
+};
+
+const initialFactContext: FactContext = {
+  buyer_knows: {
+    inspection_place_known: false,
+    address_known: false,
+  },
+};
+
 export function getDefaultState(): DialogState {
   return {
     stage: 'opening',
     checklist: { ...initialChecklist },
     notes: '',
     client_turns: 0,
+    dialog_health: { ...initialDialogHealth },
+    topic_lifecycle: { ...initialTopicLifecycle },
+    loop_guard: { ...initialLoopGuard },
+    strictnessState: { ...initialStrictnessState },
+    fact_context: { ...initialFactContext },
   };
 }

@@ -372,9 +372,13 @@ export async function completeVirtualCustomerAttempt(
   attemptId: number,
   options?: { skipInitialReply?: boolean }
 ) {
+  // 1) Показываем пользователю, что диалог закончился
   if (!options?.skipInitialReply) {
-    await ctx.reply('⏳ Диалог завершён. Обрабатываю результаты...');
+    await ctx.reply('✅ Тест завершен!');
   }
+
+  // 2) Отдельным сообщением показываем «Оцениваем тест...», его потом заменим на итог
+  let processingMsg: any = await ctx.reply('⏳ Оцениваем тест...');
 
   const attempt = await prisma.attempt.findUnique({
     where: { id: attemptId },
@@ -434,12 +438,26 @@ export async function completeVirtualCustomerAttempt(
         evaluationResultJson: JSON.stringify(result),
       },
     });
-    await ctx.reply(
-      `✅ Тест завершен!\n\n` +
-        `🎯 Ваш балл: ${result.total_score.toFixed(1)}/100\n` +
-        `📈 Уровень: ${result.level}\n\n` +
-        `Результаты сохранены. Администратор может просмотреть детальный анализ.`
-    );
+    const summaryText =
+      `🎯 Ваш балл: ${result.total_score.toFixed(1)}/100\n` +
+      `📈 Уровень: ${result.level}\n\n` +
+      `Результаты сохранены. Администратор может просмотреть детальный анализ.`;
+
+    // Replace “Оцениваем тест...” with the final summary
+    try {
+      if (processingMsg && 'message_id' in processingMsg && ctx.chat) {
+        await ctx.telegram.editMessageText(
+          ctx.chat.id,
+          (processingMsg as any).message_id,
+          undefined,
+          summaryText
+        );
+      } else {
+        await ctx.reply(summaryText);
+      }
+    } catch {
+      await ctx.reply(summaryText);
+    }
   } catch (err) {
     console.error('Virtual customer evaluation error:', err);
     await prisma.attempt.update({
@@ -457,7 +475,11 @@ export async function completeVirtualCustomerAttempt(
 }
 
 async function completeAttempt(ctx: Context, attemptId: number) {
-  await ctx.reply('⏳ Обрабатываю результаты...');
+  // 1) Сообщаем пользователю, что тест завершён
+  await ctx.reply('✅ Тест завершен!');
+
+  // 2) Отдельным сообщением показываем «Оцениваем тест...», его заменим на итог
+  const processingMsg = await ctx.reply('⏳ Оцениваем тест...');
 
   const attempt = await prisma.attempt.findUnique({
     where: { id: attemptId },
@@ -536,13 +558,27 @@ async function completeAttempt(ctx: Context, attemptId: number) {
       },
     });
 
-    // Send completion message to user
-    await ctx.reply(
-      `✅ Тест завершен!\n\n` +
+    // Final summary text (отдельно от сообщения «Тест завершен»)
+    const summaryText =
       `🎯 Ваш балл: ${result.total_score.toFixed(1)}/100\n` +
       `📈 Уровень: ${result.level}\n\n` +
-      `Результаты сохранены. Администратор может просмотреть детальный анализ.`
-    );
+      `Результаты сохранены. Администратор может просмотреть детальный анализ.`;
+
+    // Replace “Оцениваем тест...” with the final summary
+    try {
+      if (processingMsg && 'message_id' in processingMsg && ctx.chat) {
+        await ctx.telegram.editMessageText(
+          ctx.chat.id,
+          (processingMsg as any).message_id,
+          undefined,
+          summaryText
+        );
+      } else {
+        await ctx.reply(summaryText);
+      }
+    } catch {
+      await ctx.reply(summaryText);
+    }
   } catch (error) {
     console.error('Evaluation error:', error);
     await ctx.reply(
