@@ -72,6 +72,25 @@
             display: block;
         }
 
+        .call-form { margin-bottom: 24px; }
+        .call-form label { display: block; margin-bottom: 8px; font-weight: 600; }
+        .call-form-row { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+        .call-form-row .filter-input { flex: 1; min-width: 140px; }
+        .call-select { max-width: 220px; }
+        .call-status { margin-top: 8px; font-size: 14px; }
+        .call-status.error { color: var(--tg-theme-destructive-text-color, #c62828); }
+        .call-status.ok { color: var(--tg-theme-button-color, #2e7d32); }
+        .call-history-section h3 { margin-bottom: 12px; font-size: 18px; }
+        .call-card { background: var(--tg-theme-secondary-bg-color, #f5f5f5); border-radius: 12px; padding: 14px; margin-bottom: 12px; }
+        .call-card-header { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+        .call-to { font-weight: 600; }
+        .call-date { font-size: 13px; color: var(--tg-theme-hint-color, #666); }
+        .call-transcript { font-size: 14px; }
+        .call-transcript.empty { color: var(--tg-theme-hint-color, #888); font-style: italic; }
+        .call-turn { margin-bottom: 6px; }
+        .call-turn-manager { color: #1565c0; }
+        .call-turn-client { color: #2e7d32; }
+
         .card {
             background: var(--tg-theme-secondary-bg-color, #f8f8f8);
             border-radius: 12px;
@@ -1051,6 +1070,7 @@
             <button class="tab active" onclick="switchTab('employees')">👤 Сотрудники</button>
             <button class="tab" onclick="switchTab('team')">📊 Команда</button>
             <button class="tab" onclick="switchTab('expenses')">💰 Баланс</button>
+            <button class="tab" onclick="switchTab('call')">📞 Звонок</button>
         </div>
 
         <!-- Employees Tab -->
@@ -1120,6 +1140,29 @@
         <div id="expensesTab" class="tab-content">
             <div id="expensesContent">
                 <div class="loading">Загрузка...</div>
+            </div>
+        </div>
+
+        <!-- Call Tab -->
+        <div id="callTab" class="tab-content">
+            <div id="callTabContent">
+                <div class="call-form">
+                    <label>Номер телефона</label>
+                    <div class="call-form-row">
+                        <input type="tel" id="callPhoneInput" class="filter-input" placeholder="+7 999 123-45-67">
+                        <select id="callSavedNumbers" class="filter-input call-select">
+                            <option value="">— Сохранённые номера —</option>
+                        </select>
+                    </div>
+                    <button type="button" class="btn" id="callStartBtn" onclick="doStartCall()">Позвонить</button>
+                    <p id="callStatus" class="call-status"></p>
+                </div>
+                <div class="call-history-section">
+                    <h3>История звонков</h3>
+                    <div id="callHistoryList">
+                        <div class="loading">Загрузка...</div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -1220,7 +1263,7 @@
             
             const tabs = document.querySelectorAll('.tab');
             const contents = document.querySelectorAll('.tab-content');
-            const tabMap = { employees: 0, team: 1, expenses: 2 };
+            const tabMap = { employees: 0, team: 1, expenses: 2, call: 3 };
             tabs.forEach((t, i) => {
                 t.classList.remove('active');
                 if (tabMap[tab] === i) t.classList.add('active');
@@ -1238,6 +1281,92 @@
             } else if (tab === 'expenses') {
                 document.getElementById('expensesTab').classList.add('active');
                 loadExpenses();
+            } else if (tab === 'call') {
+                document.getElementById('callTab').classList.add('active');
+                loadCallTab();
+            }
+        }
+
+        let savedCallNumbers = [];
+
+        async function loadCallTab() {
+            const listEl = document.getElementById('callHistoryList');
+            const selectEl = document.getElementById('callSavedNumbers');
+            try {
+                const [numRes, historyRes] = await Promise.all([
+                    fetch(API_BASE + '/api/admin/test-numbers'),
+                    fetch(API_BASE + '/api/admin/call-history?limit=50')
+                ]);
+                const numData = await numRes.json().catch(() => ({ numbers: [] }));
+                const historyData = await historyRes.json().catch(() => ({ calls: [] }));
+                savedCallNumbers = numData.numbers || [];
+                selectEl.innerHTML = '<option value="">— Сохранённые номера —</option>';
+                savedCallNumbers.forEach(function(n) {
+                    const opt = document.createElement('option');
+                    opt.value = n;
+                    opt.textContent = n;
+                    selectEl.appendChild(opt);
+                });
+                renderCallHistory(historyData.calls || [], listEl);
+            } catch (e) {
+                listEl.innerHTML = '<div class="error">Ошибка загрузки: ' + (e.message || '') + '</div>';
+            }
+        }
+
+        function renderCallHistory(calls, container) {
+            if (!calls.length) {
+                container.innerHTML = '<div class="empty">Нет звонков</div>';
+                return;
+            }
+            container.innerHTML = calls.map(function(c) {
+                const dateStr = c.startedAt ? new Date(c.startedAt).toLocaleString('ru-RU') : '—';
+                const transcriptHtml = (c.transcript && c.transcript.length)
+                    ? '<div class="call-transcript">' + c.transcript.map(function(t) {
+                        const who = t.role === 'manager' ? 'Менеджер' : 'Клиент';
+                        return '<div class="call-turn call-turn-' + t.role + '"><strong>' + who + ':</strong> ' + escapeHtml(t.text) + '</div>';
+                    }).join('') + '</div>'
+                    : '<div class="call-transcript empty">Нет транскрипта</div>';
+                return '<div class="call-card"><div class="call-card-header">' +
+                    '<span class="call-to">' + escapeHtml(c.to) + '</span> ' +
+                    '<span class="call-date">' + dateStr + '</span></div>' +
+                    transcriptHtml + '</div>';
+            }).join('');
+        }
+
+        async function doStartCall() {
+            const input = document.getElementById('callPhoneInput');
+            const select = document.getElementById('callSavedNumbers');
+            const btn = document.getElementById('callStartBtn');
+            const status = document.getElementById('callStatus');
+            const to = (select.value && select.value.trim()) || (input.value && input.value.trim());
+            if (!to) {
+                status.textContent = 'Введите номер или выберите из списка.';
+                status.className = 'call-status error';
+                return;
+            }
+            btn.disabled = true;
+            status.textContent = 'Инициируем звонок...';
+            status.className = 'call-status';
+            try {
+                const res = await fetch(API_BASE + '/api/admin/start-voice-call', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ to: to })
+                });
+                const data = await res.json().catch(function() { return {}; });
+                if (!res.ok) {
+                    status.textContent = data.error || 'Ошибка ' + res.status;
+                    status.className = 'call-status error';
+                    return;
+                }
+                status.textContent = 'Звонок инициирован. Номер: ' + (data.to || to);
+                status.className = 'call-status ok';
+                loadCallTab();
+            } catch (e) {
+                status.textContent = 'Ошибка: ' + (e.message || '');
+                status.className = 'call-status error';
+            } finally {
+                btn.disabled = false;
             }
         }
 

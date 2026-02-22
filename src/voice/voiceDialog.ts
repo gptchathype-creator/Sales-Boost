@@ -16,6 +16,7 @@ import {
   checkCriticalEvasions,
   type TopicCode,
 } from '../logic/topicStateMachine';
+import { appendTranscript } from './callHistory';
 
 const DIALOG_HISTORY_LIMIT = 12;
 const DEFAULT_STRICTNESS: Strictness = 'medium';
@@ -256,6 +257,8 @@ export async function handleVoiceDialog(req: Request, res: Response): Promise<vo
     }
 
     const result = await getVoiceDialogReply(callId, managerText);
+    if (managerText) appendTranscript(callId, 'manager', managerText);
+    appendTranscript(callId, 'client', result.reply_text);
     res.json({ reply_text: result.reply_text, end_session: result.end_session });
   } catch (err) {
     console.error('[voice/dialog] Error:', err);

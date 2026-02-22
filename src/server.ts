@@ -10,6 +10,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { handleVoiceDialog } from './voice/voiceDialog';
 import { handleVoiceStreamMessage } from './voice/voiceStream';
+import { addCall, getCallHistory, getTestNumbers } from './voice/callHistory';
+import { startVoiceCall } from './voice/startVoiceCall';
 
 const app = express();
 
@@ -1036,6 +1038,54 @@ app.get('/api/admin/managers/:managerId/attempts', async (req, res) => {
     });
   } catch (error) {
     console.error('Get manager attempts error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Admin: test numbers for Call tab (from .env)
+app.get('/api/admin/test-numbers', (_req, res) => {
+  try {
+    const numbers = getTestNumbers();
+    res.json({ numbers });
+  } catch (err) {
+    console.error('test-numbers error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Admin: start voice call (Voximplant)
+app.post('/api/admin/start-voice-call', async (req, res) => {
+  try {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const toRaw = body.to != null ? String(body.to).trim() : null;
+    const numbers = getTestNumbers();
+    const defaultTo = numbers.length > 0 ? numbers[0] : null;
+    const to = toRaw || defaultTo;
+    if (!to) {
+      return res.status(400).json({
+        error: 'Укажите номер (to) или задайте VOX_TEST_TO / VOX_TEST_NUMBERS в .env.',
+      });
+    }
+    const result = await startVoiceCall(to);
+    if ('error' in result) {
+      return res.status(400).json({ error: result.error });
+    }
+    addCall(result.callId, to);
+    res.json({ callId: result.callId, startedAt: result.startedAt, to });
+  } catch (err) {
+    console.error('start-voice-call error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Admin: call history with transcripts
+app.get('/api/admin/call-history', (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit as string) || 50;
+    const list = getCallHistory(limit);
+    res.json({ calls: list });
+  } catch (err) {
+    console.error('call-history error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
