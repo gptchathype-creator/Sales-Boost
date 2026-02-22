@@ -259,8 +259,13 @@ function parseVirtualClientOutput(raw: string, currentState: DialogState): Virtu
     try {
       parsed = JSON.parse(cleaned);
     } catch {
-      console.warn('[virtualClient] JSON.parse failed, fallback. Raw:', cleaned.slice(0, 300));
-      return buildFallbackOutput(extractMessageFromRaw(cleaned), currentState);
+      cleaned = cleaned.replace(/\r\n/g, ' ').replace(/\n/g, ' ').replace(/\r/g, ' ');
+      try {
+        parsed = JSON.parse(cleaned);
+      } catch {
+        console.warn('[virtualClient] JSON.parse failed, fallback. Raw:', cleaned.slice(0, 300));
+        return buildFallbackOutput(extractMessageFromRaw(cleaned), currentState);
+      }
     }
   }
 
@@ -433,7 +438,7 @@ INSTRUCTIONS:
         { role: 'user', content: userContent },
       ],
       response_format: { type: 'json_object' },
-      temperature: 0.7,
+      temperature: 0.4,
       max_tokens: maxTokens,
     });
     content = response.choices[0]?.message?.content ?? null;
