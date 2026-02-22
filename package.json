@@ -3,6 +3,10 @@
   "version": "1.0.0",
   "description": "Telegram bot for evaluating sales managers' expertise",
   "main": "dist/src/index.js",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
@@ -15,7 +19,12 @@
     "generate-mock": "tsx scripts/generate-mock-data.ts",
     "delete-mock": "tsx scripts/delete-mock-data.ts",
     "check-openai": "tsx scripts/check-openai.ts",
-    "tunnel": "lt --port 3000 --subdomain salesboost"
+    "tunnel": "lt --port 3000 --subdomain salesboost",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "call-test:build": "npm run build -w @smoke/voximplant-smoke && npm run build -w @smoke/vox-smoke-test-server",
+    "call-test:dev": "npm run dev -w @smoke/vox-smoke-test-server",
+    "call-test:stats": "npm run stats -w @smoke/vox-smoke-test-server"
   },
   "keywords": [
     "telegram",
@@ -34,13 +43,16 @@
     "openai": "^4.20.1",
     "telegraf": "^4.15.4",
     "undici": "^7.20.0",
+    "ws": "^8.19.0",
     "zod": "^3.22.4"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",
     "@types/node": "^20.10.5",
+    "@types/ws": "^8.18.1",
     "prisma": "^5.7.1",
     "tsx": "^4.7.0",
-    "typescript": "^5.3.3"
+    "typescript": "^5.3.3",
+    "vitest": "^4.0.18"
   }
 }

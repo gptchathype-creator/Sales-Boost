@@ -1,59 +1,36 @@
-import { z } from 'zod';
 import { openai } from '../lib/openaiClient';
 import type { Car } from '../data/carLoader';
 import type { DialogState } from '../state/defaultState';
+import type { ConversationPhase } from '../logic/phaseManager';
+import type { TopicCode } from '../logic/topicStateMachine';
+import type { ClientProfile, ObjectionType } from '../logic/clientProfile';
+import { profileToPromptDescription } from '../logic/clientProfile';
+import type { BehaviorSignal } from '../logic/behaviorClassifier';
 
-const CHECKLIST_KEYS = [
-  'greeted_and_introduced',
-  'asked_about_specific_car',
-  'presented_car_benefits',
-  'invited_to_visit_today',
-  'mentioned_underground_mall_inspection',
-  'mentioned_wide_assortment',
-  'offered_trade_in_buyout',
-  'explained_financing_8_banks',
-  'agreed_exact_visit_datetime',
-  'agreed_next_contact_datetime',
-  'discussed_address_and_how_to_get',
-] as const;
+// ── Public types ──
 
-type ChecklistValue = 'unknown' | 'done' | 'missed';
-
-function normalizeChecklist(raw: unknown): Record<string, ChecklistValue> {
-  const out: Record<string, ChecklistValue> = {};
-  const obj = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {};
-  for (const key of CHECKLIST_KEYS) {
-    const v = obj[key];
-    out[key] = v === 'done' || v === 'missed' ? v : 'unknown';
-  }
-  return out;
-}
+export type Strictness = 'low' | 'medium' | 'high';
 
 export interface VirtualClientOutput {
   client_message: string;
   end_conversation: boolean;
   reason: string;
+  diagnostics: {
+    current_phase: ConversationPhase;
+    topics_addressed: TopicCode[];
+    topics_evaded: TopicCode[];
+    manager_tone: 'positive' | 'neutral' | 'negative' | 'hostile';
+    manager_engagement: 'active' | 'passive' | 'disengaged';
+    misinformation_detected: boolean;
+    phase_checks_update: Record<string, boolean>;
+  };
   update_state: {
     stage: string;
-    checklist: Record<string, ChecklistValue>;
+    checklist: Record<string, 'unknown' | 'done' | 'missed'>;
     notes: string;
     client_turns: number;
   };
 }
-
-export const VirtualClientOutputSchema = z.object({
-  client_message: z.string(),
-  end_conversation: z.boolean(),
-  reason: z.string(),
-  update_state: z.object({
-    stage: z.string(),
-    checklist: z.record(z.string(), z.enum(['unknown', 'done', 'missed'])),
-    notes: z.string(),
-    client_turns: z.number(),
-  }),
-});
-
-export type Strictness = 'low' | 'medium' | 'high';
 
 export interface VirtualClientInput {
   car: Car;
@@ -61,171 +38,178 @@ export interface VirtualClientInput {
   state: DialogState;
   manager_last_message: string;
   dialog_history: Array<{ role: 'client' | 'manager'; content: string }>;
-  /** low=fast/practical, medium=balanced, high=attentive */
   strictness?: Strictness;
-  /** End dialog when client_turns >= this (default 14) */
   max_client_turns?: number;
+  behaviorSignal?: BehaviorSignal;
+  /** For voice: use lower max_tokens so the model answers shorter and faster. */
+  maxResponseTokens?: number;
 }
 
-const SYSTEM_PROMPT = `You are a virtual customer communicating with a car dealership sales manager.
-Your task is to conduct a NATURAL, realistic conversation about buying a car.
+// ── Prompt ──
 
-This is NOT a test, NOT an interview, and NOT a checklist conversation.
-You must sound like a real person who remembers what has already been discussed.
+const SYSTEM_PROMPT = `You are a virtual customer (buyer) communicating with a car dealership sales manager.
+You simulate a REALISTIC buyer conversation to TEST the manager's sales skills.
 
---------------------------------
-CORE BEHAVIOR PRINCIPLES
---------------------------------
+=== YOUR ROLE ===
+You are a customer who saw an ad for a specific car and is calling/messaging the dealership.
+You sound natural, remember what was said, never repeat yourself.
+You do NOT coach, hint, or teach the manager. You simply react as a real buyer would.
 
-1. NATURAL MEMORY
-You MUST remember what the manager already said.
-If a topic was discussed, you must not return to it in the same form again.
+=== CONVERSATION PHASES ===
+The dialog progresses through diagnostic phases. You drive the conversation through them:
 
-You MAY:
-- ask a clarifying follow-up if the previous answer was incomplete or vague
-- deepen the topic once, from a new angle
+PHASE 1 — first_contact
+- You initiate contact about the car.
+- You wait for the manager to introduce themselves, name the salon, clarify which car.
+- If the manager doesn't introduce themselves or name the salon, note it silently and move on.
 
-You MUST NOT:
-- repeat the same question
-- ask the same thing using different wording multiple times
-- circle around one topic more than twice total
+PHASE 2 — needs_discovery
+- You mention what you're looking for (commute, family, budget, etc.).
+- This gives the manager a chance to ask clarifying questions about your needs.
+- If they just jump to listing specs without asking about you — note it.
 
-If something is already clear enough — MOVE FORWARD.
+PHASE 3 — product_presentation
+- You listen to the manager's presentation of the car.
+- Ask about specific features relevant to your stated needs.
+- If the manager says something factually wrong about the car, express confusion.
 
---------------------------------
-NO MANAGER GUIDANCE
---------------------------------
+PHASE 4 — money_and_objections
+- You raise exactly ONE financial/objection topic based on the assigned objection_type.
+- credit: "А в кредит можно? Какие условия?"
+- trade_in: "А если я свою машину сдам в счёт? Есть trade-in?"
+- price: "Цена немного кусается. У конкурентов видел дешевле."
+- competitor: "А почему именно эту? Видел [конкурент] по похожей цене, у них комплектация лучше."
+- After the manager responds, do NOT re-raise the same objection. Move on.
 
-- Do NOT give hints, suggestions, or feedback to the manager.
-- Do NOT ask the manager to clarify or "answer in more detail".
-- Accept any manager reply as-is, regardless of length or quality.
+PHASE 5 — closing_attempt
+- You show readiness to move forward IF the manager proposes a next step.
+- If the manager proposes a visit/test-drive, agree and try to fix date/time.
+- If the manager doesn't propose anything, wait 1-2 turns, then say you'll think about it.
 
-Your job is to RESPOND and MOVE THE DIALOG FORWARD, not to train directly.
+=== TOPIC RULES ===
+Topics: intro, salon_name, car_identification, needs, product_presentation, credit, trade_in, objection, next_step, scheduling, follow_up.
 
---------------------------------
-DIALOG FLOW LOGIC
---------------------------------
+- You may raise a topic once.
+- You may ask ONE clarification per topic if the answer was incomplete.
+- After that, the topic is CLOSED — do NOT return to it.
+- NEVER ask the same question twice unless it is the single allowed clarification attempt.
+- NEVER loop on the same topic with rephrased questions.
+- If the manager evades a question twice, note the evasion silently and move on.
 
-You control the pacing and direction of the conversation.
+=== HARD TONE & BEHAVIOR RULES (CRITICAL) ===
 
-Conversation stages:
-opening -> car_interest -> value_questions -> objections -> visit_scheduling -> logistics -> wrap_up
+You will receive a "behavior_alert" field describing the manager's last message quality.
+React to it as follows:
 
-Rules:
-- Each new message must introduce NEW information, intent, or progression.
-- Never regress to earlier stages unless absolutely necessary.
-- Never stay on one stage for too long.
-- The dialog must feel like a real phone/chat conversation.
+1. If manager_behavior is "toxic" or "bad_tone":
+   - NEVER thank them. NEVER praise. NEVER be accommodating.
+   - Respond with SHORT, FIRM, emotionally realistic displeasure.
+   - Example: "Простите, но мне не нравится такой тон." / "Это неуместно."
+   - If behavior_severity is HIGH, respond once and set end_conversation=true.
 
---------------------------------
-TOPIC HANDLING RULES (VERY IMPORTANT)
---------------------------------
+2. If manager_behavior is "low_effort" (e.g. "ок", "хз", one-word answer):
+   - NEVER say "спасибо" or "понятно" to a lazy answer.
+   - Be direct: "Можете ответить конкретнее?" / "Мне нужен развёрнутый ответ."
+   - If this is the 2nd low-effort in a row (low_effort_streak >= 2), be firmer:
+     "Я задаю конкретные вопросы. Мне нужны нормальные ответы."
 
-For each topic below:
+3. If manager_behavior is "evasion":
+   - Say directly that you noticed the question was dodged:
+     "Вы не ответили на мой вопрос." / "Я спрашивал о другом."
+   - Do NOT repeat the question more than once.
 
-- You may INITIATE it once.
-- You may CLARIFY it once if needed.
-- After that, the topic is CLOSED.
+4. If manager_behavior is "dismissive" (prohibited phrases like "посмотрите на сайте"):
+   - React with mild frustration: "Я звоню именно чтобы узнать от вас, а не с сайта."
 
-Topics:
-- credit / banks
-- trade-in / buyout
-- visit timing
-- address / location / parking
-- other cars / assortment
-- inspection conditions
+5. If manager_behavior is NORMAL:
+   - Respond naturally, move conversation forward.
+   - Be a realistic buyer — not overly friendly or supportive.
 
-If a topic is closed, do NOT return to it again.
+ABSOLUTE RULES:
+- NEVER praise a bad answer.
+- NEVER thank a rude or lazy reply.
+- NEVER repeat the same question more than once (one clarification attempt allowed).
+- Keep messages SHORT: 1-2 sentences when reacting to poor behavior.
+- Your emotional reaction must be proportional to the offense.
 
---------------------------------
-OBJECTIONS
---------------------------------
+=== BEHAVIORAL PROFILE ===
+{PROFILE_DESCRIPTION}
 
-You may use at most ONE objection per dialog.
-Choose only ONE:
-- price concern
-- trust / mileage concern
-- competitor mention
-- hesitation about credit
-
-After the objection is addressed, MOVE ON.
-Do not escalate or repeat objections.
-
---------------------------------
-STRICTNESS & DIALOG LENGTH
---------------------------------
-
-You will receive:
-- strictness: "low" | "medium" | "high"
-- max_client_turns: number
-
-Behavior by strictness:
-- low: fast, practical, goal-oriented
-- medium: balanced, curious, realistic
-- high: attentive, asks clarifying questions, but still reasonable
-
-Regardless of strictness:
-- When client_turns >= max_client_turns → END the dialog.
-- When a visit OR next contact time is agreed → END the dialog.
-
---------------------------------
-END CONDITIONS
---------------------------------
-
-End the conversation when ANY is true:
-1) Exact visit date/time is agreed and logistics discussed
-2) Next contact date/time is agreed
-3) client_turns reaches max_client_turns
-4) The conversation naturally reaches a conclusion
-
---------------------------------
-OUTPUT FORMAT (STRICT JSON ONLY)
---------------------------------
-
+=== OUTPUT FORMAT (STRICT JSON) ===
 Return ONLY valid JSON:
-
 {
-  "client_message": "string",
+  "client_message": "string (1-3 sentences, Russian)",
   "end_conversation": false,
   "reason": "string",
+  "diagnostics": {
+    "current_phase": "first_contact|needs_discovery|product_presentation|money_and_objections|closing_attempt",
+    "topics_addressed": ["topic_codes the manager addressed this turn"],
+    "topics_evaded": ["topic_codes the manager evaded this turn"],
+    "manager_tone": "positive|neutral|negative|hostile",
+    "manager_engagement": "active|passive|disengaged",
+    "misinformation_detected": false,
+    "phase_checks_update": {
+      "introduced": true/false,
+      "named_salon": true/false,
+      "clarified_car": true/false,
+      "took_initiative": true/false,
+      "asked_clarifying_questions": true/false,
+      "jumped_to_specs": true/false,
+      "structured_presentation": true/false,
+      "connected_to_needs": true/false,
+      "shut_down_client": true/false,
+      "eco_handled": true/false,
+      "proposed_next_step": true/false,
+      "suggested_visit": true/false,
+      "fixed_date_time": true/false,
+      "suggested_follow_up": true/false
+    }
+  },
   "update_state": {
     "stage": "string",
-    "checklist": {
-      "greeted_and_introduced": "unknown|done|missed",
-      "asked_about_specific_car": "unknown|done|missed",
-      "presented_car_benefits": "unknown|done|missed",
-      "invited_to_visit_today": "unknown|done|missed",
-      "mentioned_underground_mall_inspection": "unknown|done|missed",
-      "mentioned_wide_assortment": "unknown|done|missed",
-      "offered_trade_in_buyout": "unknown|done|missed",
-      "explained_financing_8_banks": "unknown|done|missed",
-      "agreed_exact_visit_datetime": "unknown|done|missed",
-      "agreed_next_contact_datetime": "unknown|done|missed",
-      "discussed_address_and_how_to_get": "unknown|done|missed"
-    },
+    "checklist": { ... },
     "notes": "string",
     "client_turns": number
   }
 }
 
---------------------------------
-LANGUAGE & STYLE
---------------------------------
-
+=== LANGUAGE & STYLE ===
 - Language: Russian
-- Tone: human, calm, realistic
-- Length: 1–3 sentences per message
-- No emojis
-- No meta-commentary
+- Tone: realistic buyer, not a pushover
+- Length: 1–3 sentences per message (1-2 when reacting to bad behavior)
+- No emojis, no meta-commentary
+- NEVER break character
 
---------------------------------
-FIRST MESSAGE
---------------------------------
+=== END CONDITIONS ===
+Set end_conversation=true when:
+1) Visit date/time is agreed and logistics discussed
+2) Next contact time is agreed
+3) client_turns >= max_client_turns
+4) Conversation naturally concludes
 
-Start as a real customer who saw the specific car and wants to check availability and basic details.
-Do not overload the first message.`;
+=== FIRST MESSAGE ===
+If manager_last_message is empty, start as a buyer who saw the ad and wants to check availability.`;
 
-function buildDealershipContext(car: Car): string {
+// ── Helpers ──
+
+function carSummary(car: Car): string {
+  const loc = car.location as { city?: string; address?: string; inspection_place?: string };
+  const terms = car.deal_terms as {
+    credit?: { banks_count?: number; monthly_payment_from_rub?: number };
+    trade_in?: boolean;
+    buyout?: boolean;
+  };
+  return [
+    `title: ${car.title}`,
+    `price_rub: ${car.price_rub}`,
+    `brand: ${car.brand}, model: ${car.model}, year: ${car.year}, mileage_km: ${car.mileage_km}`,
+    `location: ${loc?.city ?? ''}, ${loc?.address ?? ''}, inspection: ${loc?.inspection_place ?? 'подземная парковка ТЦ'}`,
+    `credit: ${terms?.credit?.banks_count ?? 8} banks, monthly from ${terms?.credit?.monthly_payment_from_rub ?? '~37000'} RUB`,
+    `trade_in: ${terms?.trade_in ?? false}, buyout: ${terms?.buyout ?? false}`,
+  ].join('\n');
+}
+
+export function buildDealershipFromCar(car: Car): string {
   const loc = car.location as { city?: string; address?: string; inspection_place?: string };
   const terms = car.deal_terms as { credit?: { banks_count?: number } };
   const banks = terms?.credit?.banks_count ?? 8;
@@ -235,30 +219,26 @@ function buildDealershipContext(car: Car): string {
   return `Автосалон в ${city}${address ? `, ${address}` : ''}. Осмотр: ${inspection}. Кредит: ${banks} банков-партнёров.`;
 }
 
-/** Short car summary to reduce tokens and latency */
-function carSummary(car: Car): string {
-  const loc = car.location as { city?: string; address?: string; inspection_place?: string };
-  const terms = car.deal_terms as { credit?: { banks_count?: number }; trade_in?: boolean; buyout?: boolean };
-  return [
-    `id: ${car.id}`,
-    `title: ${car.title}`,
-    `price_rub: ${car.price_rub}`,
-    `brand: ${car.brand}, model: ${car.model}, year: ${car.year}, mileage_km: ${car.mileage_km}`,
-    `location: ${loc?.city ?? ''}, ${loc?.address ?? ''}, осмотр: ${loc?.inspection_place ?? 'подземная парковка ТЦ'}`,
-    `credit: ${terms?.credit?.banks_count ?? 8} банков, trade_in: ${terms?.trade_in ?? false}, buyout: ${terms?.buyout ?? false}`,
-  ].join('\n');
+const HISTORY_LIMIT = 8;
+const MAX_RESPONSE_TOKENS = 500;
+const FALLBACK_CLIENT_MESSAGE = 'Здравствуйте! Я увидел объявление о вашем автомобиле. Он ещё доступен для покупки?';
+
+function topicSummary(state: DialogState): string {
+  const lines: string[] = [];
+  for (const [code, ts] of Object.entries(state.topics)) {
+    if (ts.status !== 'none') {
+      lines.push(`  ${code}: ${ts.status} (evasions: ${ts.evasion_count})`);
+    }
+  }
+  return lines.length ? lines.join('\n') : '  (all topics: none)';
 }
 
-const HISTORY_LIMIT = 6;
-const MAX_RESPONSE_TOKENS = 300;
+// ── Parse ──
 
-const FALLBACK_CLIENT_MESSAGE = 'Хорошо, давайте уточним детали. Когда удобно приехать на осмотр?';
-
-/** Try to extract client_message from raw text when JSON is invalid */
 function extractMessageFromRaw(raw: string): string {
   const cleaned = raw.trim();
   const jsonMatch = cleaned.match(/"client_message"\s*:\s*"((?:[^"\\]|\\.)*)"/);
-  if (jsonMatch && jsonMatch[1]) {
+  if (jsonMatch?.[1]) {
     return jsonMatch[1].replace(/\\"/g, '"').trim() || FALLBACK_CLIENT_MESSAGE;
   }
   const firstLine = cleaned.split('\n')[0]?.trim() || '';
@@ -268,67 +248,105 @@ function extractMessageFromRaw(raw: string): string {
   return FALLBACK_CLIENT_MESSAGE;
 }
 
-/**
- * Parse LLM response defensively: only require client_message; build update_state from whatever we get.
- * Never throws: uses fallback message if JSON invalid or client_message missing.
- */
 function parseVirtualClientOutput(raw: string, currentState: DialogState): VirtualClientOutput {
   const cleaned = raw.replace(/^```json\s*|\s*```$/g, '').trim();
-  let parsed: unknown;
-  let msg = '';
-  let endConv = false;
-  let reason = '';
-  let us: Record<string, unknown> = {};
+  let parsed: any;
 
   try {
     parsed = JSON.parse(cleaned);
-  } catch (e) {
-    console.warn('Virtual client: JSON.parse failed, using fallback. Raw (first 300):', cleaned.slice(0, 300));
-    msg = extractMessageFromRaw(cleaned);
-    return {
-      client_message: msg,
-      end_conversation: false,
-      reason: '',
-      update_state: {
-        stage: currentState.stage,
-        checklist: normalizeChecklist({}),
-        notes: currentState.notes ?? '',
-        client_turns: (currentState.client_turns ?? 0) + 1,
-      },
-    };
+  } catch {
+    console.warn('[virtualClient] JSON.parse failed, fallback. Raw:', cleaned.slice(0, 300));
+    return buildFallbackOutput(extractMessageFromRaw(cleaned), currentState);
   }
 
-  const o = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
-  msg = typeof o.client_message === 'string' ? o.client_message : '';
-  if (!msg.trim()) {
-    console.warn('Virtual client: missing client_message, using fallback. Raw (first 300):', cleaned.slice(0, 300));
+  const o = parsed && typeof parsed === 'object' ? parsed : {};
+  let msg = typeof o.client_message === 'string' ? o.client_message.trim() : '';
+  if (!msg) {
     msg = extractMessageFromRaw(cleaned);
   }
-  endConv = o.end_conversation === true;
-  reason = typeof o.reason === 'string' ? o.reason : '';
-  us = o.update_state && typeof o.update_state === 'object' ? (o.update_state as Record<string, unknown>) : {};
+
+  const endConv = o.end_conversation === true;
+  const reason = typeof o.reason === 'string' ? o.reason : '';
+
+  const diag = o.diagnostics && typeof o.diagnostics === 'object' ? o.diagnostics : {};
+  const us = o.update_state && typeof o.update_state === 'object' ? o.update_state : {};
+
+  const validPhases = ['first_contact', 'needs_discovery', 'product_presentation', 'money_and_objections', 'closing_attempt'];
+  const currentPhase = validPhases.includes(diag.current_phase) ? diag.current_phase : currentState.phase;
+
+  const validTones = ['positive', 'neutral', 'negative', 'hostile'];
+  const validEngagement = ['active', 'passive', 'disengaged'];
+
+  const diagnostics: VirtualClientOutput['diagnostics'] = {
+    current_phase: currentPhase,
+    topics_addressed: Array.isArray(diag.topics_addressed) ? diag.topics_addressed : [],
+    topics_evaded: Array.isArray(diag.topics_evaded) ? diag.topics_evaded : [],
+    manager_tone: validTones.includes(diag.manager_tone) ? diag.manager_tone : 'neutral',
+    manager_engagement: validEngagement.includes(diag.manager_engagement)
+      ? diag.manager_engagement
+      : 'active',
+    misinformation_detected: diag.misinformation_detected === true,
+    phase_checks_update:
+      diag.phase_checks_update && typeof diag.phase_checks_update === 'object'
+        ? diag.phase_checks_update
+        : {},
+  };
+
   const stage = typeof us.stage === 'string' ? us.stage : currentState.stage;
-  const notes = typeof us.notes === 'string' ? us.notes : (currentState.notes ?? '');
+  const notes = typeof us.notes === 'string' ? us.notes : currentState.notes ?? '';
   const ct = us.client_turns;
   const client_turns =
-    typeof ct === 'number' && Number.isFinite(ct) ? ct : typeof ct === 'string' ? parseInt(String(ct), 10) || (currentState.client_turns ?? 0) + 1 : (currentState.client_turns ?? 0) + 1;
+    typeof ct === 'number' && Number.isFinite(ct)
+      ? ct
+      : (currentState.client_turns ?? 0) + 1;
+
+  const LEGACY_KEYS = [
+    'greeted_and_introduced', 'asked_about_specific_car', 'presented_car_benefits',
+    'invited_to_visit_today', 'mentioned_underground_mall_inspection', 'mentioned_wide_assortment',
+    'offered_trade_in_buyout', 'explained_financing_8_banks', 'agreed_exact_visit_datetime',
+    'agreed_next_contact_datetime', 'discussed_address_and_how_to_get',
+  ];
+  const rawChecklist = us.checklist && typeof us.checklist === 'object' ? us.checklist : {};
+  const checklist: Record<string, 'unknown' | 'done' | 'missed'> = {};
+  for (const key of LEGACY_KEYS) {
+    const v = (rawChecklist as any)[key];
+    checklist[key] = v === 'done' || v === 'missed' ? v : 'unknown';
+  }
 
   return {
-    client_message: msg.trim() || FALLBACK_CLIENT_MESSAGE,
+    client_message: msg || FALLBACK_CLIENT_MESSAGE,
     end_conversation: endConv,
     reason,
+    diagnostics,
+    update_state: { stage, checklist, notes, client_turns },
+  };
+}
+
+function buildFallbackOutput(message: string, state: DialogState): VirtualClientOutput {
+  return {
+    client_message: message,
+    end_conversation: false,
+    reason: '',
+    diagnostics: {
+      current_phase: state.phase,
+      topics_addressed: [],
+      topics_evaded: [],
+      manager_tone: 'neutral',
+      manager_engagement: 'active',
+      misinformation_detected: false,
+      phase_checks_update: {},
+    },
     update_state: {
-      stage,
-      checklist: normalizeChecklist(us.checklist),
-      notes,
-      client_turns,
+      stage: state.stage,
+      checklist: {},
+      notes: state.notes ?? '',
+      client_turns: (state.client_turns ?? 0) + 1,
     },
   };
 }
 
-/**
- * Call virtual client LLM; defensive parse so we never fail on structure. Fast model + short context.
- */
+// ── Main call ──
+
 export async function getVirtualClientReply(input: VirtualClientInput): Promise<VirtualClientOutput> {
   const carStr = carSummary(input.car);
   const history = input.dialog_history.slice(-HISTORY_LIMIT);
@@ -337,33 +355,81 @@ export async function getVirtualClientReply(input: VirtualClientInput): Promise<
     .join('\n');
 
   const strictness = input.strictness ?? 'medium';
-  const maxClientTurns = input.max_client_turns ?? 14;
+  const maxClientTurns = input.max_client_turns ?? 10;
+  const profile: ClientProfile = input.state.client_profile ?? 'normal';
+  const objType: ObjectionType = input.state.objection_triggered ?? 'price';
 
-  const userContent = `car:
+  const profileDesc = profileToPromptDescription(profile);
+  const systemPrompt = SYSTEM_PROMPT.replace('{PROFILE_DESCRIPTION}', profileDesc);
+
+  // Build behavior alert for the CustomerAgent
+  const beh = input.behaviorSignal;
+  let behaviorAlert = 'manager_behavior: NORMAL\nbehavior_severity: NONE';
+  if (beh) {
+    const flags: string[] = [];
+    if (beh.toxic) flags.push('toxic');
+    if (beh.low_effort) flags.push('low_effort');
+    if (beh.evasion) flags.push('evasion');
+    if (beh.prohibited_phrase_hits.length > 0) flags.push('prohibited_phrases');
+    const label = flags.length > 0 ? flags.join(', ') : 'NORMAL';
+    behaviorAlert = [
+      `manager_behavior: ${label}`,
+      `behavior_severity: ${beh.severity}`,
+      `low_effort_streak: ${input.state.low_effort_streak}`,
+      beh.prohibited_phrase_hits.length > 0
+        ? `prohibited_hits: ${beh.prohibited_phrase_hits.join(', ')}`
+        : null,
+      beh.rationale !== 'no issues detected' ? `rationale: ${beh.rationale}` : null,
+    ].filter(Boolean).join('\n');
+  }
+
+  const userContent = `=== CAR DATA ===
 ${carStr}
 
-dealership: ${input.dealership}
+=== DEALERSHIP ===
+${input.dealership}
 
-state: stage=${input.state.stage}, client_turns=${input.state.client_turns}
+=== SESSION STATE ===
+phase: ${input.state.phase}
+client_turns: ${input.state.client_turns}
+client_profile: ${profile}
+objection_type_to_trigger: ${objType}
 strictness: ${strictness}
 max_client_turns: ${maxClientTurns}
 
-manager_last_message: ${input.manager_last_message ? `"${input.manager_last_message}"` : '(first message)'}
+=== BEHAVIOR ALERT (react to this!) ===
+${behaviorAlert}
 
-${historyStr ? `Conversation:\n${historyStr}\n` : ''}
-If client_turns >= ${maxClientTurns}, set end_conversation=true. Return ONLY valid JSON (client_message, end_conversation, reason, update_state with stage, checklist, notes, client_turns). Keep client_message 1-3 sentences.`;
+=== TOPIC STATUS ===
+${topicSummary(input.state)}
+
+=== DIALOG HEALTH ===
+patience: ${input.state.dialog_health.patience}, trust: ${input.state.dialog_health.trust}, irritation: ${input.state.dialog_health.irritation}
+
+=== MANAGER'S LAST MESSAGE ===
+${input.manager_last_message ? `"${input.manager_last_message}"` : '(first message — you open the conversation)'}
+
+${historyStr ? `=== CONVERSATION HISTORY ===\n${historyStr}\n` : ''}
+INSTRUCTIONS:
+- If client_turns >= ${maxClientTurns}, set end_conversation=true.
+- Progress through phases naturally. Current phase: ${input.state.phase}.
+- In phase money_and_objections, trigger objection type: ${objType}.
+- REACT TO BEHAVIOR ALERT: if toxic/low_effort/evasion, respond firmly per the rules.
+- Report diagnostics accurately.
+- Return ONLY valid JSON.`;
 
   let content: string | null = null;
   try {
+    const maxTokens = input.maxResponseTokens ?? MAX_RESPONSE_TOKENS;
     const response = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'system', content: systemPrompt },
         { role: 'user', content: userContent },
       ],
       response_format: { type: 'json_object' },
       temperature: 0.7,
-      max_tokens: MAX_RESPONSE_TOKENS,
+      max_tokens: maxTokens,
     });
     content = response.choices[0]?.message?.content ?? null;
   } catch (apiErr) {
@@ -375,12 +441,16 @@ If client_turns >= ${maxClientTurns}, set end_conversation=true. Return ONLY val
     if (status === 401 || code === 'invalid_api_key') {
       throw new Error('OpenAI: неверный API ключ. Проверьте OPENAI_API_KEY в .env');
     }
-    if (status === 429 || code === 'insufficient_quota' || (typeof errMsg === 'string' && errMsg.toLowerCase().includes('quota'))) {
+    if (
+      status === 429 ||
+      code === 'insufficient_quota' ||
+      (typeof errMsg === 'string' && errMsg.toLowerCase().includes('quota'))
+    ) {
       throw new Error('OpenAI: закончился баланс или лимит. Пополните счёт на platform.openai.com');
     }
     if (status === 403 && code === 'unsupported_country_region_territory') {
       throw new Error(
-        'OpenAI: API недоступен в вашем регионе. Используйте VPN/прокси: добавьте HTTPS_PROXY в .env (например HTTPS_PROXY=http://127.0.0.1:7890) и перезапустите бота.'
+        'OpenAI: API недоступен в вашем регионе. Используйте VPN/прокси: добавьте HTTPS_PROXY в .env.'
       );
     }
     if (status === 403) {
@@ -389,17 +459,10 @@ If client_turns >= ${maxClientTurns}, set end_conversation=true. Return ONLY val
     throw new Error(`OpenAI API: ${errMsg}`);
   }
 
-  if (!content || !content.trim()) {
-    console.warn('Virtual client: empty response, using fallback');
-    return parseVirtualClientOutput(
-      JSON.stringify({ client_message: FALLBACK_CLIENT_MESSAGE, end_conversation: false, reason: '', update_state: { stage: input.state.stage, checklist: {}, notes: '', client_turns: (input.state.client_turns ?? 0) + 1 } }),
-      input.state
-    );
+  if (!content?.trim()) {
+    console.warn('[virtualClient] empty response, fallback');
+    return buildFallbackOutput(FALLBACK_CLIENT_MESSAGE, input.state);
   }
 
   return parseVirtualClientOutput(content, input.state);
-}
-
-export function buildDealershipFromCar(car: Car): string {
-  return buildDealershipContext(car);
 }

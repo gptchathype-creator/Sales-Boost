@@ -33,7 +33,8 @@ function normalize(text: string): string {
 function countOccurrences(text: string, tokens: string[]): number {
   let count = 0;
   for (const token of tokens) {
-    const re = new RegExp(`\\b${token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi');
+    const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`(?:^|[\\s,;.!?])${escaped}(?=[\\s,;.!?]|$)`, 'gi');
     const matches = text.match(re);
     if (matches) count += matches.length;
   }

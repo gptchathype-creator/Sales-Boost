@@ -2,7 +2,7 @@
 import { Telegraf, Scenes, session, Context } from 'telegraf';
 import { config } from './config';
 import { handleStart, handleNameInput, showMainMenu, showMainMenuContent } from './handlers/start';
-import { handleStartTraining, showStrictnessChoice, showTrainingMenu, handleStopTraining } from './handlers/training';
+import { handleStartTraining, showStrictnessChoice, showProfileChoice, showTrainingMenu, handleStopTraining } from './handlers/training';
 import { handleAdmin, handleDeleteMe, handleCheckAdmin } from './handlers/admin';
 import { handleSettings, handleSettingsCallback } from './handlers/settings';
 import { sendCSV, isAdmin } from './utils';
@@ -173,21 +173,35 @@ bot.action('start_training_low', async (ctx) => {
   if (ctx.callbackQuery?.message && 'message_id' in ctx.callbackQuery.message) {
     await ctx.telegram.deleteMessage(ctx.chat!.id, ctx.callbackQuery.message.message_id).catch(() => {});
   }
-  await handleStartTraining(ctx, 'low');
+  showProfileChoice(ctx, 'low');
 });
 bot.action('start_training_medium', async (ctx) => {
   await ctx.answerCbQuery();
   if (ctx.callbackQuery?.message && 'message_id' in ctx.callbackQuery.message) {
     await ctx.telegram.deleteMessage(ctx.chat!.id, ctx.callbackQuery.message.message_id).catch(() => {});
   }
-  await handleStartTraining(ctx, 'medium');
+  showProfileChoice(ctx, 'medium');
 });
 bot.action('start_training_high', async (ctx) => {
   await ctx.answerCbQuery();
   if (ctx.callbackQuery?.message && 'message_id' in ctx.callbackQuery.message) {
     await ctx.telegram.deleteMessage(ctx.chat!.id, ctx.callbackQuery.message.message_id).catch(() => {});
   }
-  await handleStartTraining(ctx, 'high');
+  showProfileChoice(ctx, 'high');
+});
+// Client profile selection → start training
+bot.action(/^profile_(low|medium|high)_(normal|thorough|pressure)$/, async (ctx) => {
+  await ctx.answerCbQuery();
+  if (ctx.callbackQuery?.message && 'message_id' in ctx.callbackQuery.message) {
+    await ctx.telegram.deleteMessage(ctx.chat!.id, ctx.callbackQuery.message.message_id).catch(() => {});
+  }
+  const strictness = ctx.match[1] as 'low' | 'medium' | 'high';
+  const profile = ctx.match[2] as 'normal' | 'thorough' | 'pressure';
+  await handleStartTraining(ctx, strictness, profile);
+});
+bot.action('training', async (ctx) => {
+  await ctx.answerCbQuery();
+  await showStrictnessChoice(ctx);
 });
 // Старые кнопки — показываем выбор строгости (на случай старых сообщений)
 bot.action('start_test', async (ctx) => {

@@ -1,0 +1,22 @@
+{
+  "name": "@smoke/vox-smoke-test-server",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc && node dist/server.js",
+    "start": "node dist/server.js",
+    "stats": "tsc && node dist/stats.js"
+  },
+  "dependencies": {
+    "@smoke/voximplant-smoke": "*",
+    "dotenv": "^16.4.0",
+    "express": "^4.21.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.11.0",
+    "typescript": "^5.3.0"
+  }
+}

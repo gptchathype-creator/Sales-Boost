@@ -29,17 +29,19 @@ model TrainingSession {
   userId           Int
   // "assigned" | "in_progress" | "completed" | "cancelled" | "failed"
   status           String
-  // JSON: extended dialog state (stage, checklist, notes, client_turns, dialog_health, topic_lifecycle, loop_guard, strictness, fact_context)
+  // "normal" | "thorough" | "pressure"
+  clientProfile    String    @default("normal")
+  // JSON: extended dialog state (phase, topics, checklist, health, etc.)
   stateJson        String?
   createdAt        DateTime  @default(now())
   completedAt      DateTime?
   // Legacy assessment fields (kept for backward compatibility)
   assessmentScore  Float?    // 0-100
   assessmentJson   String?   // JSON: legacy training assessment
-  // New evaluation fields
-  failureReason    String?   // "poor_communication" | "ignored_questions" | "rude_language" | other free-form text
-  evaluationJson   String?   // Strict JSON from post-dialog evaluator
-  totalScore       Float?    // 0-100, overall result from evaluator
+  // V2 evaluation fields
+  failureReason    String?   // "poor_communication" | "ignored_questions" | "rude_language" | "repeated_low_effort" | "critical_evasion:topic"
+  evaluationJson   String?   // Strict V2 JSON: { overall_score_0_100, dimension_scores, checklist, issues, recommendations }
+  totalScore       Float?    // 0-100, deterministic score from evaluator
 
   user     User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   messages DialogMessage[]

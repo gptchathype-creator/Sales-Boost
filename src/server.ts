@@ -3,10 +3,13 @@ import https from 'https';
 import http from 'http';
 import fs from 'fs';
 import type { Telegraf } from 'telegraf';
+import { WebSocketServer } from 'ws';
 import { prisma } from './db';
 import { config } from './config';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { handleVoiceDialog } from './voice/voiceDialog';
+import { handleVoiceStreamMessage } from './voice/voiceStream';
 
 const app = express();
 
@@ -86,6 +89,14 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true, message: 'Sales Boost server is running' });
 });
 
+// Voice call dialog: Voximplant scenario sends ASR text here, we return LLM reply for TTS
+app.post('/voice/dialog', (req, res) => {
+  handleVoiceDialog(req, res).catch((err) => {
+    console.error('[voice/dialog] Unhandled:', err);
+    res.status(500).json({ error: 'Internal error', reply_text: '', end_session: false });
+  });
+});
+
 // Explicit root: always serve Mini App
 app.get('/', (req, res) => {
   if (INDEX_HTML_PATH) {
@@ -159,12 +170,11 @@ app.get('/api/admin/verify', async (req, res) => {
   }
 });
 
-// Get training session details
+// Get training session details (V2 evaluation-aware)
 app.get('/api/admin/training-sessions/:sessionId', async (req, res) => {
   try {
     const sessionId = parseInt(req.params.sessionId);
     const session = await prisma.trainingSession.findUnique({
-      // Показываем как завершённые, так и досрочно прерванные тренировки
       where: { id: sessionId },
       include: {
         user: true,
@@ -176,11 +186,102 @@ app.get('/api/admin/training-sessions/:sessionId', async (req, res) => {
       return res.status(404).json({ error: 'Session not found' });
     }
 
-    const hasAssessment = session.assessmentScore != null && session.assessmentJson != null;
     const isFailed = session.status === 'failed';
-    const data = hasAssessment ? JSON.parse(session.assessmentJson as string) : {};
-    const score = hasAssessment ? (session.assessmentScore as number) : 0;
-    const level = hasAssessment ? scoreToLevel(score) : null;
+    const hasV2Eval = session.evaluationJson != null;
+    const hasLegacyAssessment = session.assessmentScore != null && session.assessmentJson != null;
+
+    // Build conversation steps from messages (sequential pairs)
+    const msgs = session.messages;
+    const conversationPairs: Array<{ order: number; customerMessage: string; answer: string }> = [];
+    for (let i = 0; i + 1 < msgs.length; i += 2) {
+      if (msgs[i].role === 'client' && msgs[i + 1].role === 'manager') {
+        conversationPairs.push({
+          order: conversationPairs.length + 1,
+          customerMessage: msgs[i].content,
+          answer: msgs[i + 1].content,
+        });
+      }
+    }
+
+    // Collect behavior signals from manager messages (V2)
+    const managerMsgs = msgs.filter(m => m.role === 'manager' && m.qualitySignalJson);
+    let behaviorSummary: any = null;
+    if (managerMsgs.length > 0) {
+      let toxicCount = 0;
+      let lowEffortCount = 0;
+      let evasionCount = 0;
+      const allProhibited: string[] = [];
+      for (const m of managerMsgs) {
+        try {
+          const sig = JSON.parse(m.qualitySignalJson!);
+          if (sig.toxic) toxicCount++;
+          if (sig.low_effort) lowEffortCount++;
+          if (sig.evasion) evasionCount++;
+          if (Array.isArray(sig.prohibited_phrase_hits)) allProhibited.push(...sig.prohibited_phrase_hits);
+        } catch { /* skip */ }
+      }
+      behaviorSummary = {
+        totalManagerMessages: managerMsgs.length,
+        toxicCount,
+        lowEffortCount,
+        evasionCount,
+        prohibitedPhrases: [...new Set(allProhibited)],
+      };
+    }
+
+    if (hasV2Eval) {
+      // ── V2 evaluation response ──
+      const evalData = JSON.parse(session.evaluationJson as string);
+      const score = evalData.overall_score_0_100 ?? session.totalScore ?? 0;
+      const level = scoreToLevel(score);
+      const qualityTag = isFailed ? 'Плохо' : scoreToQualityTag(score);
+
+      const checklistItems = Array.isArray(evalData.checklist) ? evalData.checklist : [];
+      const issues = Array.isArray(evalData.issues) ? evalData.issues : [];
+      const recommendations = Array.isArray(evalData.recommendations) ? evalData.recommendations : [];
+
+      const steps = conversationPairs.map((p) => {
+        return {
+          order: p.order,
+          customerMessage: p.customerMessage,
+          answer: p.answer,
+          score: null,
+          feedback: null,
+          betterExample: null,
+          criteriaScores: {} as Record<string, number>,
+        };
+      });
+
+      return res.json({
+        type: 'training',
+        id: session.id,
+        userName: session.user.fullName,
+        testTitle: 'Тренировка с виртуальным клиентом',
+        clientProfile: (session as any).clientProfile ?? 'normal',
+        startedAt: session.createdAt,
+        finishedAt: session.completedAt,
+        totalScore: score,
+        level,
+        qualityTag,
+        failureReason: session.failureReason,
+        failureReasonLabel: isFailed ? getFailureReasonLabel(session.failureReason) : null,
+        dimensionScores: evalData.dimension_scores ?? null,
+        checklist: checklistItems,
+        issues,
+        strengths: checklistItems
+          .filter((c: any) => c.status === 'YES')
+          .map((c: any) => c.comment || c.code),
+        weaknesses: issues.map((i: any) => i.recommendation || i.issue_type),
+        recommendations,
+        behaviorSummary,
+        steps,
+      });
+    }
+
+    // ── Legacy assessment fallback ──
+    const data = hasLegacyAssessment ? JSON.parse(session.assessmentJson as string) : {};
+    const score = hasLegacyAssessment ? (session.assessmentScore as number) : 0;
+    const level = hasLegacyAssessment ? scoreToLevel(score) : null;
     const qualityTag = isFailed ? 'Плохо' : scoreToQualityTag(score);
     const assessmentSteps = (data.steps || []) as Array<{
       step_order: number;
@@ -192,65 +293,55 @@ app.get('/api/admin/training-sessions/:sessionId', async (req, res) => {
       ? (data.improvements as string[])
       : [];
 
-    const steps = (() => {
-      const msgs = session.messages;
-      const pairs: Array<{ order: number; customerMessage: string; answer: string }> = [];
-      for (let i = 0; i + 1 < msgs.length; i += 2) {
-        if (msgs[i].role === 'client' && msgs[i + 1].role === 'manager') {
-          pairs.push({
-            order: pairs.length + 1,
-            customerMessage: msgs[i].content,
-            answer: msgs[i + 1].content,
-          });
-        }
-      }
-      return pairs.map((p) => {
-        const stepData = assessmentSteps.find((s) => s.step_order === p.order);
-
-        // Если модель не вернула покомпонентную оценку для этого шага,
-        // не оставляем "Н/Д": считаем, что ответ = 0/100 и даём общую рекомендацию.
-        if (!stepData) {
-          const genericImprovement =
-            globalImprovements[0] ||
-            'Ответить подробнее и сфокусироваться на пользе для клиента и следующем шаге.';
-          return {
-            order: p.order,
-            customerMessage: p.customerMessage,
-            answer: p.answer,
-            score: 0,
-            feedback:
-              'Этот ответ не был отдельно оценён моделью, но по контексту считается слабым. ' +
-              `Общая рекомендация: ${genericImprovement}`,
-            betterExample: genericImprovement,
-            criteriaScores: {} as Record<string, number>,
-          };
-        }
-
+    const steps = conversationPairs.map((p) => {
+      const stepData = assessmentSteps.find((s) => s.step_order === p.order);
+      if (!stepData) {
+        const genericImprovement =
+          globalImprovements[0] ||
+          'Ответить подробнее и сфокусироваться на пользе для клиента и следующем шаге.';
         return {
           order: p.order,
           customerMessage: p.customerMessage,
           answer: p.answer,
-          score: stepData.step_score ?? 0,
-          feedback: stepData.feedback ?? null,
-          betterExample: stepData.better_example ?? null,
+          score: 0,
+          feedback:
+            'Этот ответ не был отдельно оценён моделью. ' +
+            `Общая рекомендация: ${genericImprovement}`,
+          betterExample: genericImprovement,
           criteriaScores: {} as Record<string, number>,
         };
-      });
-    })();
+      }
+      return {
+        order: p.order,
+        customerMessage: p.customerMessage,
+        answer: p.answer,
+        score: stepData.step_score ?? 0,
+        feedback: stepData.feedback ?? null,
+        betterExample: stepData.better_example ?? null,
+        criteriaScores: {} as Record<string, number>,
+      };
+    });
 
     res.json({
       type: 'training',
       id: session.id,
       userName: session.user.fullName,
       testTitle: 'Тренировка с виртуальным клиентом',
+      clientProfile: (session as any).clientProfile ?? 'normal',
       startedAt: session.createdAt,
       finishedAt: session.completedAt,
-      totalScore: hasAssessment ? session.assessmentScore : isFailed ? 0 : null,
+      totalScore: hasLegacyAssessment ? session.assessmentScore : isFailed ? 0 : null,
       level,
       qualityTag,
+      failureReason: session.failureReason,
+      failureReasonLabel: isFailed ? getFailureReasonLabel(session.failureReason) : null,
+      dimensionScores: null,
+      checklist: [],
+      issues: [],
       strengths: [],
       weaknesses: data.mistakes || [],
       recommendations: data.improvements || [],
+      behaviorSummary,
       steps,
     });
   } catch (error) {
@@ -378,6 +469,28 @@ function scoreToQualityTag(score: number): string {
   return 'Хорошо';
 }
 
+function getFailureReasonLabel(reason?: string | null): string {
+  if (!reason) return 'Тренировка досрочно завершена';
+  const base = reason.split(':')[0];
+  const map: Record<string, string> = {
+    PROFANITY: 'Недопустимая лексика',
+    BAD_TONE: 'Грубый / враждебный тон',
+    IGNORED_QUESTIONS: 'Игнорирование вопросов клиента',
+    POOR_COMMUNICATION: 'Низкое качество коммуникации',
+    REPEATED_LOW_EFFORT: 'Повторные некачественные ответы',
+    rude_language: 'Недопустимая лексика',
+    ignored_questions: 'Игнорирование вопросов клиента',
+    poor_communication: 'Низкое качество коммуникации',
+    repeated_low_effort: 'Повторные некачественные ответы',
+  };
+  if (map[base]) return map[base];
+  if (base === 'CRITICAL_EVASION' || base === 'critical_evasion') {
+    const topic = reason.split(':')[1] ?? '';
+    return `Критический вопрос проигнорирован (${topic})`;
+  }
+  return 'Тренировка досрочно завершена';
+}
+
 // Short summary for card (from assessment or built from strengths/weaknesses)
 function buildCardSummary(
   type: 'attempt' | 'training',
@@ -457,47 +570,78 @@ app.get('/api/admin/attempts', async (req, res) => {
     });
 
     const trainingItems = trainingSessions.map(s => {
-      const hasAssessment = s.assessmentScore != null && s.assessmentJson != null;
-      const data = hasAssessment
-        ? JSON.parse(s.assessmentJson as string)
-        : { mistakes: [], improvements: [], quality: '' };
-      const score = hasAssessment ? (s.assessmentScore as number) : 0;
+      const hasV2Eval = s.evaluationJson != null;
+      const hasLegacyAssessment = s.assessmentScore != null && s.assessmentJson != null;
       const isFailed = s.status === 'failed';
+
+      let score = 0;
+      let weaknesses: string[] = [];
+      let recommendations: string[] = [];
+      let dimensionScores = null;
+
+      if (hasV2Eval) {
+        const evalData = JSON.parse(s.evaluationJson as string);
+        score = evalData.overall_score_0_100 ?? s.totalScore ?? 0;
+        weaknesses = Array.isArray(evalData.issues)
+          ? evalData.issues.map((i: any) => i.recommendation || i.issue_type)
+          : [];
+        recommendations = Array.isArray(evalData.recommendations) ? evalData.recommendations : [];
+        dimensionScores = evalData.dimension_scores ?? null;
+      } else if (hasLegacyAssessment) {
+        const data = JSON.parse(s.assessmentJson as string);
+        score = s.assessmentScore as number;
+        weaknesses = Array.isArray(data.mistakes) ? data.mistakes : [];
+        recommendations = Array.isArray(data.improvements) ? data.improvements : [];
+      }
+
+      const failReasonLabels: Record<string, string> = {
+        rude_language: 'Досрочно завершена: недопустимая лексика.',
+        ignored_questions: 'Досрочно завершена: менеджер игнорировал вопросы.',
+        poor_communication: 'Досрочно завершена: низкое качество коммуникации.',
+        repeated_low_effort: 'Досрочно завершена: повторные некачественные ответы.',
+        PROFANITY: 'Досрочно завершена: недопустимая лексика.',
+        BAD_TONE: 'Досрочно завершена: грубый / враждебный тон.',
+        IGNORED_QUESTIONS: 'Досрочно завершена: менеджер игнорировал вопросы.',
+        POOR_COMMUNICATION: 'Досрочно завершена: низкое качество коммуникации.',
+        REPEATED_LOW_EFFORT: 'Досрочно завершена: повторные некачественные ответы.',
+      };
+      const baseReason = (s.failureReason ?? '').split(':')[0];
 
       let summary: string;
       if (isFailed) {
-        const reason =
-          s.failureReason === 'rude_language'
-            ? 'Досрочно завершена системой из‑за недопустимой лексики.'
-            : s.failureReason === 'ignored_questions'
-              ? 'Досрочно завершена: менеджер игнорировал вопросы клиента.'
-              : s.failureReason === 'poor_communication'
-                ? 'Досрочно завершена: низкое качество коммуникации.'
-                : 'Тренировка досрочно завершена системой.';
-        summary = reason;
+        summary = failReasonLabels[baseReason]
+          ?? (baseReason === 'critical_evasion' || baseReason === 'CRITICAL_EVASION'
+            ? `Досрочно завершена: критический вопрос проигнорирован (${(s.failureReason ?? '').split(':')[1] ?? ''}).`
+            : 'Тренировка досрочно завершена системой.');
+      } else if (hasV2Eval) {
+        summary = `Балл: ${score}/100`;
       } else {
+        const data = hasLegacyAssessment ? JSON.parse(s.assessmentJson as string) : {};
         summary = buildCardSummary('training', {
           quality: data.quality,
           mistakes: data.mistakes,
           improvements: data.improvements,
         });
       }
+
       return {
         type: 'training' as const,
         id: `t-${s.id}`,
         sessionId: s.id,
         userName: s.user.fullName,
         testTitle: 'Тренировка с виртуальным клиентом',
+        clientProfile: (s as any).clientProfile ?? 'normal',
         startedAt: s.createdAt,
         finishedAt: s.completedAt,
-        totalScore: hasAssessment ? s.assessmentScore : isFailed ? 0 : null,
-        level: hasAssessment ? scoreToLevel(score) : null,
+        totalScore: score,
+        level: scoreToLevel(score),
         qualityTag: isFailed ? 'Плохо' : scoreToQualityTag(score),
         summary,
         evaluationError: null,
         strengths: [],
-        weaknesses: (data.mistakes as string[]) || [],
-        recommendations: (data.improvements as string[]) || [],
+        weaknesses,
+        recommendations,
+        dimensionScores,
         steps: [],
       };
     });
@@ -563,8 +707,15 @@ app.get('/api/admin/summary', async (req, res) => {
 
     const totalScoreAttempts = attempts.reduce((sum, a) => sum + (a.totalScore || 0), 0);
     const totalScoreTrainings = trainingSessions.reduce((sum, s) => {
+      if (s.totalScore != null) return sum + s.totalScore;
+      if (s.evaluationJson != null) {
+        try {
+          const evalData = JSON.parse(s.evaluationJson);
+          if (typeof evalData.overall_score_0_100 === 'number') return sum + evalData.overall_score_0_100;
+        } catch { /* skip */ }
+      }
       if (s.assessmentScore != null) return sum + s.assessmentScore;
-      if (s.status === 'failed') return sum; // оценка не проставлена — не увеличиваем сумму
+      if (s.status === 'failed') return sum;
       return sum;
     }, 0);
 
@@ -598,23 +749,43 @@ app.get('/api/admin/summary', async (req, res) => {
       }
     });
 
-    // Добавляем тренировки: слабые стороны из mistakes, сильные из improvements (если есть)
     trainingSessions.forEach((s) => {
-      if (!s.assessmentJson) return;
-      const data = JSON.parse(s.assessmentJson) as {
-        mistakes?: string[];
-        improvements?: string[];
-        quality?: string;
-      };
-      const mistakes = Array.isArray(data.mistakes) ? data.mistakes : [];
-      const improvements = Array.isArray(data.improvements) ? data.improvements : [];
-
-      mistakes.forEach((w: string) => {
-        allWeaknesses[w] = (allWeaknesses[w] || 0) + 1;
-      });
-      improvements.forEach((s: string) => {
-        allStrengths[s] = (allStrengths[s] || 0) + 1;
-      });
+      const hasV2Eval = s.evaluationJson != null;
+      if (hasV2Eval) {
+        try {
+          const evalData = JSON.parse(s.evaluationJson as string);
+          const issues: any[] = Array.isArray(evalData.issues) ? evalData.issues : [];
+          const recs: string[] = Array.isArray(evalData.recommendations) ? evalData.recommendations : [];
+          const checklistItems: any[] = Array.isArray(evalData.checklist) ? evalData.checklist : [];
+          issues.forEach((i: any) => {
+            const text = i.recommendation || i.issue_type || '';
+            if (text) allWeaknesses[text] = (allWeaknesses[text] || 0) + 1;
+          });
+          recs.forEach((r: string) => {
+            if (r) allStrengths[r] = (allStrengths[r] || 0) + 1;
+          });
+          checklistItems
+            .filter((c: any) => c.status === 'YES')
+            .forEach((c: any) => {
+              const text = c.comment || c.code;
+              if (text) allStrengths[text] = (allStrengths[text] || 0) + 1;
+            });
+        } catch { /* skip malformed JSON */ }
+      } else if (s.assessmentJson) {
+        const data = JSON.parse(s.assessmentJson) as {
+          mistakes?: string[];
+          improvements?: string[];
+          quality?: string;
+        };
+        const mistakes = Array.isArray(data.mistakes) ? data.mistakes : [];
+        const improvements = Array.isArray(data.improvements) ? data.improvements : [];
+        mistakes.forEach((w: string) => {
+          allWeaknesses[w] = (allWeaknesses[w] || 0) + 1;
+        });
+        improvements.forEach((r: string) => {
+          allStrengths[r] = (allStrengths[r] || 0) + 1;
+        });
+      }
     });
 
     const topWeaknesses = Object.entries(allWeaknesses)
@@ -644,21 +815,37 @@ app.get('/api/admin/summary', async (req, res) => {
           recommendations: a.recommendationsJson ? JSON.parse(a.recommendationsJson) : [],
         })),
         ...trainingSessions.map(s => {
-          const data = s.assessmentJson
-            ? (JSON.parse(s.assessmentJson) as {
-                mistakes?: string[];
-                improvements?: string[];
-                quality?: string;
-              })
-            : { mistakes: [], improvements: [], quality: '' };
-          const score = s.assessmentScore ?? (s.status === 'failed' ? 0 : 0);
+          let score = 0;
+          let weaknesses: string[] = [];
+          let recommendations: string[] = [];
+          let strengths: string[] = [];
+
+          if (s.evaluationJson) {
+            try {
+              const evalData = JSON.parse(s.evaluationJson);
+              score = evalData.overall_score_0_100 ?? s.totalScore ?? s.assessmentScore ?? 0;
+              weaknesses = Array.isArray(evalData.issues)
+                ? evalData.issues.map((i: any) => i.recommendation || i.issue_type)
+                : [];
+              recommendations = Array.isArray(evalData.recommendations) ? evalData.recommendations : [];
+              strengths = Array.isArray(evalData.checklist)
+                ? evalData.checklist.filter((c: any) => c.status === 'YES').map((c: any) => c.comment || c.code)
+                : [];
+            } catch { /* skip */ }
+          } else if (s.assessmentJson) {
+            const data = JSON.parse(s.assessmentJson) as { mistakes?: string[]; improvements?: string[] };
+            score = s.assessmentScore ?? 0;
+            weaknesses = data.mistakes || [];
+            recommendations = data.improvements || [];
+          }
+
           return {
             userName: s.user.fullName,
             score,
-            level: '',
-            strengths: [],
-            weaknesses: data.mistakes || [],
-            recommendations: data.improvements || [],
+            level: scoreToLevel(score),
+            strengths,
+            weaknesses,
+            recommendations,
           };
         }),
       ],
@@ -912,7 +1099,7 @@ export function startServer(): Promise<void> {
 
     // For tunnel (Cloudflare), always use HTTP - tunnel provides HTTPS
     // When miniAppUrl is localhost, always use HTTP so the site loads in browser immediately
-    const useTunnel = config.miniAppUrl.includes('trycloudflare.com') || config.miniAppUrl.includes('loca.lt') || config.miniAppUrl.includes('localtunnel.me');
+    const useTunnel = config.miniAppUrl.includes('trycloudflare.com') || config.miniAppUrl.includes('loca.lt') || config.miniAppUrl.includes('localtunnel.me') || config.miniAppUrl.includes('serveo') || config.miniAppUrl.includes('lhr.life');
     const isLocalhost = config.miniAppUrl.includes('localhost') || config.miniAppUrl.includes('127.0.0.1');
     const useHttp = useTunnel || isLocalhost || !certPath || !keyPath || !config.miniAppUrl.startsWith('https://');
 
@@ -933,12 +1120,32 @@ export function startServer(): Promise<void> {
       reject(err);
     };
 
+    function attachVoiceStream(server: http.Server | https.Server): void {
+      const wss = new WebSocketServer({ noServer: true });
+      wss.on('connection', (ws, _req) => {
+        console.log('[voice/stream] Client connected');
+        ws.on('message', (data: Buffer | string) => {
+          handleVoiceStreamMessage(ws, data.toString());
+        });
+      });
+      server.on('upgrade', (request, socket, head) => {
+        if (request.url?.startsWith('/voice/stream')) {
+          wss.handleUpgrade(request, socket, head, (ws) => {
+            wss.emit('connection', ws, request);
+          });
+        } else {
+          socket.destroy();
+        }
+      });
+    }
+
     if (!useHttp && certPath && keyPath) {
       const options = {
         key: fs.readFileSync(keyPath),
         cert: fs.readFileSync(certPath),
       };
       const httpsServer = https.createServer(options, app);
+      attachVoiceStream(httpsServer);
       httpsServer.on('error', onError);
       httpsServer.listen(port, host, () => {
         console.log('[OK] HTTPS server: http://localhost:' + port);
@@ -948,11 +1155,13 @@ export function startServer(): Promise<void> {
       });
     } else {
       const httpServer = http.createServer(app);
+      attachVoiceStream(httpServer);
       httpServer.on('error', onError);
       httpServer.listen(port, host, () => {
         console.log('[OK] HTTP server: http://localhost:' + port);
         console.log('     Open in browser: http://localhost:' + port);
         console.log('     Health: http://localhost:' + port + '/health');
+        console.log('     Voice stream: ws://localhost:' + port + '/voice/stream');
         if (useTunnel) {
           console.log('     Tunnel will provide HTTPS for Telegram.');
         }

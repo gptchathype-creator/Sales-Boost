@@ -7,6 +7,7 @@ dist/
 *.db-journal
 .DS_Store
 *.log
+out/
 *.pem
 cert.pem
 key.pem

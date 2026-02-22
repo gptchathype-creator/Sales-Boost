@@ -9,10 +9,11 @@ import { setChatCommands } from '../commandsMenu';
 import { isAdmin } from '../utils';
 import { sendClientVoiceIfEnabled } from '../voice/tts';
 import { parsePreferences } from '../state/userPreferences';
+import type { ClientProfile } from '../logic/clientProfile';
+import { getProfileConfig, pickRandomObjection } from '../logic/clientProfile';
 
 const MSG_TRAINING_STARTED = '✅ Тренировка началась!';
 const MSG_GENERATING = '⏳ Подготовка сообщения...';
-
 const DEFAULT_STRICTNESS: Strictness = 'medium';
 
 export async function handleStopTraining(ctx: Context): Promise<void> {
@@ -81,17 +82,33 @@ export function showStrictnessChoice(ctx: Context): void {
   );
 }
 
-export async function handleStartTraining(ctx: Context, strictness: Strictness = DEFAULT_STRICTNESS): Promise<void> {
+/**
+ * Show client profile selection after strictness is chosen.
+ */
+export function showProfileChoice(ctx: Context, strictness: Strictness): void {
+  ctx.reply(
+    'Выберите тип клиента:',
+    Markup.inlineKeyboard([
+      [Markup.button.callback('👤 Обычный', `profile_${strictness}_normal`)],
+      [Markup.button.callback('🔍 Дотошный', `profile_${strictness}_thorough`)],
+      [Markup.button.callback('💪 Жёсткий', `profile_${strictness}_pressure`)],
+      [Markup.button.callback('← Назад', 'training')],
+    ])
+  );
+}
+
+export async function handleStartTraining(
+  ctx: Context,
+  strictness: Strictness = DEFAULT_STRICTNESS,
+  profile: ClientProfile = 'normal'
+): Promise<void> {
   const telegramId = ctx.from?.id.toString();
   if (!telegramId) {
     await ctx.reply('Ошибка: не удалось определить ваш ID.');
     return;
   }
 
-  const user = await prisma.user.findUnique({
-    where: { telegramId },
-  });
-
+  const user = await prisma.user.findUnique({ where: { telegramId } });
   if (!user || user.fullName === `User ${telegramId}`) {
     await ctx.reply('Сначала укажите ваше имя: отправьте /start');
     return;
@@ -100,7 +117,6 @@ export async function handleStartTraining(ctx: Context, strictness: Strictness =
   const existing = await prisma.trainingSession.findFirst({
     where: { userId: user.id, status: 'in_progress' },
   });
-
   if (existing) {
     await ctx.reply('У вас уже есть активная тренировка. Отвечайте на сообщения клиента в чате.');
     return;
@@ -115,35 +131,41 @@ export async function handleStartTraining(ctx: Context, strictness: Strictness =
     return;
   }
 
-  const state = getDefaultState();
-  // Применяем strictness к расширенному состоянию
+  // ── Build initial state with profile + strictness ──
+  const profileConfig = getProfileConfig(profile);
   const max_client_turns =
-    strictness === 'low' ? 7 : strictness === 'high' ? 14 : 10;
-  const stateWithStrictness = {
-    ...state,
-    strictnessState: {
-      strictness,
-      max_client_turns,
-    },
-    // Для обратной совместимости: сохраняем plain strictness тоже
-    strictness,
-  } as any;
+    strictness === 'low'
+      ? profileConfig.min_turns
+      : strictness === 'high'
+        ? profileConfig.max_turns
+        : Math.round((profileConfig.min_turns + profileConfig.max_turns) / 2);
+
+  const state = getDefaultState(profile);
+  state.strictnessState = { strictness, max_client_turns };
+  state.dialog_health.patience = profileConfig.patience_base;
+  state.dialog_health.trust = profileConfig.trust_base;
+  state.objection_triggered = pickRandomObjection(profile);
+
   const dealership = buildDealershipFromCar(car);
 
   const session = await prisma.trainingSession.create({
     data: {
       userId: user.id,
       status: 'in_progress',
-      stateJson: JSON.stringify(stateWithStrictness),
+      stateJson: JSON.stringify(state),
+      clientProfile: profile,
     },
   });
 
   const fallbackFirstMessage = `Здравствуйте! Я увидел объявление о ${car.title}. Он ещё доступен для покупки?`;
 
   try {
-    await ctx.reply(MSG_TRAINING_STARTED);
+    const profileLabel =
+      profile === 'normal' ? '👤 Обычный' : profile === 'thorough' ? '🔍 Дотошный' : '💪 Жёсткий';
+    await ctx.reply(`${MSG_TRAINING_STARTED}\nКлиент: ${profileLabel}`);
     const statusMsg = await ctx.reply(MSG_GENERATING);
     await ctx.sendChatAction('typing');
+
     let out: Awaited<ReturnType<typeof getVirtualClientReply>>;
     try {
       out = await getVirtualClientReply({
@@ -153,62 +175,66 @@ export async function handleStartTraining(ctx: Context, strictness: Strictness =
         manager_last_message: '',
         dialog_history: [],
         strictness,
+        max_client_turns,
       });
     } catch (firstErr) {
-      const msg = firstErr instanceof Error ? firstErr.message : String(firstErr);
-      console.error('[training] First client message failed:', msg);
+      console.error('[training] First client message failed:', firstErr instanceof Error ? firstErr.message : firstErr);
       await new Promise((r) => setTimeout(r, 2000));
       try {
         out = await getVirtualClientReply({
           car,
           dealership,
-          state: stateWithStrictness,
+          state,
           manager_last_message: '',
           dialog_history: [],
           strictness,
+          max_client_turns,
         });
-      } catch (retryErr) {
-        console.error('[training] Retry failed, using fallback first message:', retryErr instanceof Error ? retryErr.message : retryErr);
+      } catch {
         out = {
           client_message: fallbackFirstMessage,
           end_conversation: false,
           reason: '',
+          diagnostics: {
+            current_phase: 'first_contact',
+            topics_addressed: [],
+            topics_evaded: [],
+            manager_tone: 'neutral',
+            manager_engagement: 'active',
+            misinformation_detected: false,
+            phase_checks_update: {},
+          },
           update_state: {
-            stage: stateWithStrictness.stage,
-            checklist: stateWithStrictness.checklist as Record<
-              string,
-              'unknown' | 'done' | 'missed'
-            >,
-            notes: stateWithStrictness.notes ?? '',
+            stage: state.stage,
+            checklist: state.checklist as Record<string, 'unknown' | 'done' | 'missed'>,
+            notes: '',
             client_turns: 1,
           },
         };
       }
     }
-    const newState: any = {
-      ...stateWithStrictness,
-      ...out.update_state,
-      strictnessState: {
-        strictness,
-        max_client_turns,
+
+    const newState = {
+      ...state,
+      ...{
+        stage: out.update_state.stage,
+        checklist: { ...state.checklist, ...out.update_state.checklist },
+        notes: out.update_state.notes,
+        client_turns: out.update_state.client_turns,
       },
-      strictness,
+      phase: out.diagnostics.current_phase,
     };
+
     await prisma.trainingSession.update({
       where: { id: session.id },
       data: { stateJson: JSON.stringify(newState) },
     });
     await prisma.dialogMessage.create({
-      data: {
-        sessionId: session.id,
-        role: 'client',
-        content: out.client_message,
-        source: 'text',
-      },
+      data: { sessionId: session.id, role: 'client', content: out.client_message, source: 'text' },
     });
-    try {
-      await ctx.telegram.deleteMessage(ctx.chat!.id, statusMsg.message_id);
-    } catch (_) {}
+
+    try { await ctx.telegram.deleteMessage(ctx.chat!.id, statusMsg.message_id); } catch {}
+
     const prefs = parsePreferences(user.preferencesJson);
     const promptMsg = '✍️ Напишите, что бы вы ответили клиенту.';
     if (prefs.replyMode === 'text') {
@@ -220,6 +246,7 @@ export async function handleStartTraining(ctx: Context, strictness: Strictness =
     } else {
       await ctx.reply(promptMsg);
     }
+
     const chatId = ctx.chat?.id;
     if (chatId && ctx.chat?.type === 'private') {
       setChatCommands(chatId, { trainingActive: true, isAdmin: isAdmin(ctx) }).catch((err) =>
@@ -240,7 +267,7 @@ export async function handleStartTraining(ctx: Context, strictness: Strictness =
     const userMsg =
       msg.includes('регион') || msg.includes('region') || msg.includes('HTTPS_PROXY')
         ? msg
-        : msg.includes('баланс') || msg.includes('quota') || msg.includes('insufficient_quota')
+        : msg.includes('баланс') || msg.includes('quota')
           ? 'Закончился баланс OpenAI. Пополните счёт: https://platform.openai.com/account/billing'
           : msg.includes('API ключ') || msg.includes('invalid_api_key')
             ? 'Неверный OpenAI API ключ. Проверьте OPENAI_API_KEY в .env'

@@ -337,6 +337,200 @@
             border: 1px solid var(--tg-theme-secondary-bg-color, #e0e0e0);
         }
 
+        /* V2 Evaluation styles */
+        .dimension-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 16px;
+        }
+
+        .dimension-card {
+            background: var(--tg-theme-bg-color, #ffffff);
+            border-radius: 10px;
+            padding: 14px;
+            text-align: center;
+        }
+
+        .dimension-label {
+            font-size: 12px;
+            color: var(--tg-theme-hint-color, #999);
+            margin-bottom: 6px;
+            font-weight: 600;
+        }
+
+        .dimension-score {
+            font-size: 22px;
+            font-weight: 700;
+        }
+
+        .dimension-bar {
+            height: 6px;
+            background: var(--tg-theme-secondary-bg-color, #e0e0e0);
+            border-radius: 3px;
+            margin-top: 8px;
+            overflow: hidden;
+        }
+
+        .dimension-bar-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 0.5s ease;
+        }
+
+        .checklist-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            padding: 10px 0;
+            border-bottom: 1px solid var(--tg-theme-secondary-bg-color, #e8e8e8);
+        }
+
+        .checklist-item:last-child {
+            border-bottom: none;
+        }
+
+        .checklist-status {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            flex-shrink: 0;
+            margin-top: 2px;
+        }
+
+        .checklist-status.yes { background: #e8f5e9; }
+        .checklist-status.partial { background: #fff3e0; }
+        .checklist-status.no { background: #ffebee; }
+        .checklist-status.na { background: var(--tg-theme-secondary-bg-color, #f0f0f0); }
+
+        .checklist-body {
+            flex: 1;
+        }
+
+        .checklist-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--tg-theme-text-color, #000);
+        }
+
+        .checklist-weight {
+            font-size: 11px;
+            color: var(--tg-theme-hint-color, #999);
+            margin-left: 6px;
+        }
+
+        .checklist-comment {
+            font-size: 13px;
+            color: var(--tg-theme-hint-color, #666);
+            margin-top: 4px;
+            line-height: 1.4;
+        }
+
+        .checklist-evidence {
+            font-size: 12px;
+            color: var(--tg-theme-hint-color, #888);
+            margin-top: 4px;
+            font-style: italic;
+        }
+
+        .issue-item {
+            background: var(--tg-theme-bg-color, #ffffff);
+            border-radius: 10px;
+            padding: 12px;
+            margin-bottom: 10px;
+            border-left: 4px solid;
+        }
+
+        .issue-item.high { border-left-color: #c62828; }
+        .issue-item.medium { border-left-color: #f57c00; }
+        .issue-item.low { border-left-color: #2e7d32; }
+
+        .issue-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 6px;
+        }
+
+        .issue-severity-badge {
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 10px;
+            font-weight: 700;
+        }
+
+        .issue-severity-badge.high { background: #ffebee; color: #c62828; }
+        .issue-severity-badge.medium { background: #fff3e0; color: #e65100; }
+        .issue-severity-badge.low { background: #e8f5e9; color: #2e7d32; }
+
+        .issue-text {
+            font-size: 14px;
+            line-height: 1.5;
+            color: var(--tg-theme-text-color, #000);
+        }
+
+        .issue-evidence {
+            font-size: 12px;
+            color: var(--tg-theme-hint-color, #888);
+            margin-top: 6px;
+            font-style: italic;
+        }
+
+        .profile-badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 10px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .profile-badge.normal { background: #e3f2fd; color: #1565c0; }
+        .profile-badge.thorough { background: #fff3e0; color: #e65100; }
+        .profile-badge.pressure { background: #ffebee; color: #c62828; }
+
+        .fail-banner {
+            background: #ffebee;
+            border: 1px solid #ef9a9a;
+            border-radius: 12px;
+            padding: 14px 16px;
+            margin-bottom: 16px;
+            text-align: center;
+        }
+
+        .fail-banner-text {
+            font-size: 14px;
+            font-weight: 600;
+            color: #c62828;
+        }
+
+        .behavior-summary {
+            background: var(--tg-theme-bg-color, #ffffff);
+            border-radius: 10px;
+            padding: 14px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        .behavior-stat {
+            text-align: center;
+        }
+
+        .behavior-stat-value {
+            font-size: 20px;
+            font-weight: 700;
+        }
+
+        .behavior-stat-label {
+            font-size: 11px;
+            color: var(--tg-theme-hint-color, #999);
+            margin-top: 2px;
+        }
+
         .pagination {
             display: flex;
             justify-content: center;
@@ -1129,6 +1323,9 @@
                 const summary = attempt.summary || '';
                 const idAttr = typeof attempt.id === 'string' ? `'${attempt.id}'` : attempt.id;
                 const typeAttr = attempt.type ? `'${attempt.type}'` : "'attempt'";
+                const profileLabel = attempt.clientProfile && PROFILE_LABELS[attempt.clientProfile]
+                    ? PROFILE_LABELS[attempt.clientProfile] : '';
+                const profileClass = attempt.clientProfile || 'normal';
                 return `
                 <div class="card" onclick="showAttemptDetail(${idAttr}, ${typeAttr})">
                     <div class="card-header">
@@ -1137,7 +1334,8 @@
                     </div>
                     <div class="score ${scoreClass}">${scoreDisplay}</div>
                     <div class="meta">
-                        ${new Date(attempt.finishedAt).toLocaleString('ru-RU')}
+                        ${attempt.finishedAt ? new Date(attempt.finishedAt).toLocaleString('ru-RU') : '—'}
+                        ${profileLabel ? ` · <span class="profile-badge ${profileClass}" style="font-size:11px;padding:2px 8px;">${escapeHtml(profileLabel)}</span>` : ''}
                     </div>
                     ${summary ? `
                         <div style="margin-top: 8px; font-size: 13px; color: var(--tg-theme-hint-color, #888); line-height: 1.4;">
@@ -1374,7 +1572,7 @@
                         <div class="chart-title">📈 Распределение по уровням</div>
                         <div class="bar-chart">
                             <div class="bar-item">
-                                <div class="bar-label">Junior</div>
+                                <div class="bar-label">Начальный</div>
                                 <div class="bar-wrapper">
                                     <div class="bar-fill junior" style="width: ${juniorPercent}%">
                                         ${juniorPercent > 10 ? juniorPercent + '%' : ''}
@@ -1383,7 +1581,7 @@
                                 <div class="bar-value">${data.levelCounts.Junior}</div>
                             </div>
                             <div class="bar-item">
-                                <div class="bar-label">Middle</div>
+                                <div class="bar-label">Средний</div>
                                 <div class="bar-wrapper">
                                     <div class="bar-fill middle" style="width: ${middlePercent}%">
                                         ${middlePercent > 10 ? middlePercent + '%' : ''}
@@ -1392,7 +1590,7 @@
                                 <div class="bar-value">${data.levelCounts.Middle}</div>
                             </div>
                             <div class="bar-item">
-                                <div class="bar-label">Senior</div>
+                                <div class="bar-label">Продвинутый</div>
                                 <div class="bar-wrapper">
                                     <div class="bar-fill senior" style="width: ${seniorPercent}%">
                                         ${seniorPercent > 10 ? seniorPercent + '%' : ''}
@@ -1548,6 +1746,108 @@
             return insights.map(i => `<div style="margin-bottom: 8px;">${i}</div>`).join('');
         }
 
+        const CHECKLIST_LABELS = {
+            INTRODUCTION: 'Приветствие и представление',
+            SALON_NAME: 'Название салона',
+            CAR_IDENTIFICATION: 'Уточнение автомобиля',
+            NEEDS_DISCOVERY: 'Выявление потребностей',
+            INITIATIVE: 'Инициативность',
+            PRODUCT_PRESENTATION: 'Презентация автомобиля',
+            CREDIT_EXPLANATION: 'Объяснение кредита',
+            TRADEIN_OFFER: 'Предложение trade-in',
+            OBJECTION_HANDLING: 'Работа с возражениями',
+            NEXT_STEP_PROPOSAL: 'Предложение следующего шага',
+            DATE_FIXATION: 'Фиксация даты',
+            FOLLOW_UP_AGREEMENT: 'Договорённость о контакте',
+            COMMUNICATION_TONE: 'Тон общения',
+        };
+
+        const ISSUE_TYPE_LABELS = {
+            NO_INTRO: 'Нет приветствия',
+            NO_SALON_NAME: 'Не назвал салон',
+            NO_NEEDS_DISCOVERY: 'Нет выявления потребностей',
+            WEAK_PRESENTATION: 'Слабая презентация',
+            NO_NEXT_STEP: 'Нет следующего шага',
+            NO_DATE_FIX: 'Не зафиксирована дата',
+            WEAK_TRADEIN: 'Слабая работа с trade-in',
+            WEAK_CREDIT: 'Поверхностное объяснение кредита',
+            BAD_TONE: 'Некорректный тон',
+            PASSIVE_STYLE: 'Пассивный стиль',
+            MISINFORMATION: 'Недостоверная информация',
+            REDIRECT_TO_WEBSITE: 'Перенаправление на сайт',
+            LOW_ENGAGEMENT: 'Низкая вовлечённость',
+            PROFANITY: 'Ненормативная лексика',
+        };
+
+        const DIMENSION_LABELS = {
+            first_contact: 'Первый контакт',
+            product_and_sales: 'Продукт и продажи',
+            closing_commitment: 'Закрытие сделки',
+            communication: 'Коммуникация',
+        };
+
+        const PROFILE_LABELS = {
+            normal: 'Обычный клиент',
+            thorough: 'Дотошный клиент',
+            pressure: 'Сложный клиент',
+        };
+
+        const STATUS_ICONS = { YES: '✅', PARTIAL: '⚠️', NO: '❌', NA: '—' };
+        const STATUS_LABELS = { YES: 'Выполнено', PARTIAL: 'Частично', NO: 'Не выполнено', NA: 'Не применимо' };
+
+        const SEVERITY_LABELS = { HIGH: 'Высокая', MEDIUM: 'Средняя', LOW: 'Низкая' };
+
+        const ISSUE_RECOMMENDATIONS_RU = {
+            NO_INTRO: 'Всегда начинайте разговор с приветствия и представления по имени.',
+            NO_SALON_NAME: 'Называйте автосалон в начале разговора — это повышает доверие клиента.',
+            NO_NEEDS_DISCOVERY: 'Задайте минимум 2–3 вопроса, чтобы понять мотивацию клиента, прежде чем презентовать.',
+            WEAK_PRESENTATION: 'Стройте презентацию вокруг потребностей клиента и ключевых преимуществ.',
+            NO_NEXT_STEP: 'Всегда предлагайте конкретный следующий шаг: визит, тест-драйв или повторный звонок.',
+            NO_DATE_FIX: 'Фиксируйте точную дату и время следующей встречи или контакта.',
+            WEAK_TRADEIN: 'Проактивно предлагайте оценку trade-in и объясняйте процесс.',
+            WEAK_CREDIT: 'Объясняйте условия кредита подробно: банки-партнёры, примерный платёж, первый взнос.',
+            BAD_TONE: 'Поддерживайте дружелюбный и профессиональный тон на протяжении всего разговора.',
+            PASSIVE_STYLE: 'Проявляйте инициативу: предлагайте варианты, задавайте вопросы, ведите диалог.',
+            MISINFORMATION: 'Всегда проверяйте факты перед тем, как озвучивать их клиенту.',
+            REDIRECT_TO_WEBSITE: 'Отвечайте на вопросы напрямую; сайт — только как дополнительная ссылка.',
+            LOW_ENGAGEMENT: 'Проявляйте искренний интерес: уточняющие вопросы, обращение по имени, учёт потребностей.',
+            PROFANITY: 'Ненормативная лексика абсолютно недопустима в профессиональном общении.',
+        };
+
+        const ISSUE_EVIDENCE_RU = {
+            NO_INTRO: 'Менеджер не представился.',
+            NO_SALON_NAME: 'Название салона не было озвучено.',
+            NO_NEEDS_DISCOVERY: 'Не были заданы уточняющие вопросы о потребностях клиента.',
+            WEAK_PRESENTATION: 'Презентация автомобиля была слабой или отсутствовала.',
+            NO_NEXT_STEP: 'Следующий шаг не был предложен.',
+            NO_DATE_FIX: 'Конкретная дата и время не были зафиксированы.',
+            WEAK_TRADEIN: 'Trade-in был упомянут, но не раскрыт полностью.',
+            WEAK_CREDIT: 'Кредитные условия были упомянуты поверхностно.',
+            BAD_TONE: 'Обнаружен негативный или непрофессиональный тон общения.',
+            PASSIVE_STYLE: 'Менеджер был пассивен — ждал вопросов вместо проактивной работы.',
+            MISINFORMATION: 'Менеджер сообщил неверную информацию об автомобиле.',
+            REDIRECT_TO_WEBSITE: 'Менеджер перенаправил клиента на сайт вместо того, чтобы ответить.',
+            LOW_ENGAGEMENT: 'Менеджер проявил низкую вовлечённость и интерес к клиенту.',
+            PROFANITY: 'Обнаружена ненормативная лексика.',
+        };
+
+        function isRussian(text) {
+            if (!text) return false;
+            return /[а-яА-ЯёЁ]/.test(text);
+        }
+
+        function getIssueRecommendation(issue) {
+            if (issue.recommendation && isRussian(issue.recommendation)) return issue.recommendation;
+            return ISSUE_RECOMMENDATIONS_RU[issue.issue_type] || issue.recommendation || '';
+        }
+
+        function getIssueEvidence(issue) {
+            if (issue.evidence && isRussian(issue.evidence)) return issue.evidence;
+            return ISSUE_EVIDENCE_RU[issue.issue_type] || issue.evidence || '';
+        }
+
+        function colorForScore(s) { return s >= 76 ? '#2e7d32' : s >= 50 ? '#f57c00' : '#c62828'; }
+
         async function showAttemptDetail(attemptId, type) {
             currentAttemptId = attemptId;
             const listView = document.getElementById('listView');
@@ -1576,118 +1876,197 @@
                 const scoreClass = score != null ? (score >= 76 ? 'high' : score >= 50 ? 'medium' : 'low') : 'unknown';
                 const qualityTag = attempt.qualityTag || (score != null ? (score >= 76 ? 'Хорошо' : score >= 50 ? 'Средне' : 'Плохо') : null);
                 const badgeClass = qualityTag === 'Хорошо' ? 'good' : qualityTag === 'Средне' ? 'average' : qualityTag === 'Плохо' ? 'poor' : '';
-                let html = `
-                    <div class="card">
+                const isTraining = type === 'training';
+                const profileLabel = PROFILE_LABELS[attempt.clientProfile] || attempt.clientProfile || '';
+                const profileClass = attempt.clientProfile || 'normal';
+
+                let html = '';
+
+                // Failure banner
+                if (attempt.failureReason) {
+                    const label = attempt.failureReasonLabel || 'Тренировка досрочно завершена';
+                    html += `<div class="fail-banner"><div class="fail-banner-text">⚠️ Досрочное завершение: ${escapeHtml(label)}</div></div>`;
+                }
+
+                // Header card
+                html += `
+                    <div class="card" style="cursor:default;">
                         <div class="card-header">
                             <div class="card-title">${escapeHtml(attempt.userName)}</div>
                             ${qualityTag ? `<span class="badge ${badgeClass}">${escapeHtml(qualityTag)}</span>` : ''}
                         </div>
                         <div class="score ${scoreClass}">${scoreDisplay}</div>
                         <div class="meta">
+                            ${isTraining && profileLabel ? `<span class="profile-badge ${profileClass}">${escapeHtml(profileLabel)}</span><br>` : ''}
                             Начало: ${new Date(attempt.startedAt).toLocaleString('ru-RU')}<br>
-                            Завершение: ${new Date(attempt.finishedAt).toLocaleString('ru-RU')}
+                            Завершение: ${attempt.finishedAt ? new Date(attempt.finishedAt).toLocaleString('ru-RU') : '—'}
                         </div>
                     </div>
                 `;
 
-                // Overall summary
+                // ═══ V2: Dimension Scores ═══
+                const dims = attempt.dimensionScores;
+                if (dims) {
+                    html += `<div class="summary-section">
+                        <h2 class="summary-title">📋 Оценка по направлениям</h2>
+                        <div class="dimension-grid">`;
+                    for (const [key, val] of Object.entries(dims)) {
+                        const label = DIMENSION_LABELS[key] || key;
+                        const color = colorForScore(val);
+                        html += `
+                            <div class="dimension-card">
+                                <div class="dimension-label">${escapeHtml(label)}</div>
+                                <div class="dimension-score" style="color:${color}">${val}</div>
+                                <div class="dimension-bar"><div class="dimension-bar-fill" style="width:${val}%;background:${color}"></div></div>
+                            </div>`;
+                    }
+                    html += `</div></div>`;
+                }
+
+                // ═══ V2: Checklist ═══
+                const checklist = attempt.checklist || [];
+                if (checklist.length > 0) {
+                    html += `<div class="summary-section">
+                        <h2 class="summary-title">📝 Чек-лист оценки</h2>`;
+                    checklist.forEach(item => {
+                        const icon = STATUS_ICONS[item.status] || '—';
+                        const statusCls = (item.status || 'na').toLowerCase();
+                        const label = CHECKLIST_LABELS[item.code] || item.code;
+                        html += `
+                            <div class="checklist-item">
+                                <div class="checklist-status ${statusCls}">${icon}</div>
+                                <div class="checklist-body">
+                                    <div class="checklist-title">${escapeHtml(label)}<span class="checklist-weight">(вес: ${item.weight})</span></div>
+                                    ${item.comment ? `<div class="checklist-comment">${escapeHtml(item.comment)}</div>` : ''}
+                                    ${item.evidence && item.evidence.length > 0 ? `<div class="checklist-evidence">«${escapeHtml(item.evidence[0])}»</div>` : ''}
+                                </div>
+                            </div>`;
+                    });
+                    html += `</div>`;
+                }
+
+                // ═══ V2: Issues ═══
+                const issues = attempt.issues || [];
+                if (issues.length > 0) {
+                    html += `<div class="summary-section">
+                        <h2 class="summary-title">⚠️ Выявленные проблемы</h2>`;
+                    issues.forEach(issue => {
+                        const sevCls = (issue.severity || 'low').toLowerCase();
+                        const sevLabel = SEVERITY_LABELS[issue.severity] || issue.severity;
+                        const typeLabel = ISSUE_TYPE_LABELS[issue.issue_type] || issue.issue_type;
+                        const recText = getIssueRecommendation(issue);
+                        const evText = getIssueEvidence(issue);
+                        html += `
+                            <div class="issue-item ${sevCls}">
+                                <div class="issue-header">
+                                    <span class="issue-severity-badge ${sevCls}">${escapeHtml(sevLabel)}</span>
+                                    <strong style="font-size:13px;">${escapeHtml(typeLabel)}</strong>
+                                </div>
+                                <div class="issue-text">${escapeHtml(recText)}</div>
+                                ${evText ? `<div class="issue-evidence">${escapeHtml(evText)}</div>` : ''}
+                            </div>`;
+                    });
+                    html += `</div>`;
+                }
+
+                // ═══ V2: Behavior Summary ═══
+                const beh = attempt.behaviorSummary;
+                if (beh && beh.totalManagerMessages > 0) {
+                    const hasProblem = beh.toxicCount > 0 || beh.lowEffortCount > 0 || beh.evasionCount > 0;
+                    if (hasProblem) {
+                        html += `<div class="summary-section">
+                            <h2 class="summary-title">🔍 Анализ поведения менеджера</h2>
+                            <div class="behavior-summary">
+                                <div class="behavior-stat">
+                                    <div class="behavior-stat-value" style="color:${beh.toxicCount > 0 ? '#c62828' : '#2e7d32'}">${beh.toxicCount}</div>
+                                    <div class="behavior-stat-label">Токсичных</div>
+                                </div>
+                                <div class="behavior-stat">
+                                    <div class="behavior-stat-value" style="color:${beh.lowEffortCount > 0 ? '#f57c00' : '#2e7d32'}">${beh.lowEffortCount}</div>
+                                    <div class="behavior-stat-label">Некачественных</div>
+                                </div>
+                                <div class="behavior-stat">
+                                    <div class="behavior-stat-value" style="color:${beh.evasionCount > 0 ? '#f57c00' : '#2e7d32'}">${beh.evasionCount}</div>
+                                    <div class="behavior-stat-label">Уклонений</div>
+                                </div>
+                                <div class="behavior-stat">
+                                    <div class="behavior-stat-value">${beh.totalManagerMessages}</div>
+                                    <div class="behavior-stat-label">Всего сообщений</div>
+                                </div>
+                            </div>
+                            ${beh.prohibitedPhrases && beh.prohibitedPhrases.length > 0 ? `
+                                <div style="margin-top:10px;font-size:13px;color:var(--tg-theme-hint-color,#888);">
+                                    Запрещённые фразы: ${beh.prohibitedPhrases.map(p => escapeHtml(p)).join(', ')}
+                                </div>` : ''}
+                        </div>`;
+                    }
+                }
+
+                // ═══ Strengths / Weaknesses / Recommendations (text lists) ═══
                 const strengths = attempt.strengths || [];
                 const weaknesses = attempt.weaknesses || [];
                 const recommendations = attempt.recommendations || [];
                 if (strengths.length > 0 || weaknesses.length > 0 || recommendations.length > 0) {
                     html += '<div class="summary-section">';
                     html += '<h2 class="summary-title">Общая оценка</h2>';
-                    
+
                     if (strengths.length > 0) {
-                        html += '<div class="summary-block">';
-                        html += '<div class="summary-block-title">✅ Сильные стороны</div>';
-                        html += '<ul class="summary-list">';
-                        strengths.forEach(s => {
-                            html += `<li>${escapeHtml(s)}</li>`;
-                        });
+                        html += '<div class="summary-block"><div class="summary-block-title">✅ Сильные стороны</div><ul class="summary-list">';
+                        strengths.forEach(s => { html += `<li>${escapeHtml(s)}</li>`; });
                         html += '</ul></div>';
                     }
-
                     if (weaknesses.length > 0) {
-                        html += '<div class="summary-block">';
-                        html += '<div class="summary-block-title">⚠️ Слабые стороны</div>';
-                        html += '<ul class="summary-list">';
-                        weaknesses.forEach(w => {
-                            html += `<li>${escapeHtml(w)}</li>`;
-                        });
+                        html += '<div class="summary-block"><div class="summary-block-title">⚠️ Слабые стороны</div><ul class="summary-list">';
+                        weaknesses.forEach(w => { html += `<li>${escapeHtml(w)}</li>`; });
                         html += '</ul></div>';
                     }
-
                     if (recommendations.length > 0) {
-                        html += '<div class="summary-block">';
-                        html += '<div class="summary-block-title">💡 Рекомендации</div>';
-                        html += '<ul class="summary-list">';
-                        recommendations.forEach(r => {
-                            html += `<li>${escapeHtml(r)}</li>`;
-                        });
+                        html += '<div class="summary-block"><div class="summary-block-title">💡 Рекомендации</div><ul class="summary-list">';
+                        recommendations.forEach(r => { html += `<li>${escapeHtml(r)}</li>`; });
                         html += '</ul></div>';
                     }
-
                     html += '</div>';
                 }
 
-                // Steps details
-                html += '<h2 style="margin-bottom: 16px; font-size: 16px; font-weight: 600;">Детали по вопросам</h2>';
-
+                // ═══ Conversation Steps ═══
                 const steps = attempt.steps || [];
+                if (steps.length > 0) {
+                    html += '<h2 style="margin-bottom: 16px; font-size: 16px; font-weight: 600;">Диалог по шагам</h2>';
+                }
                 if (steps.length === 0 && attempt.evaluationError) {
                     html += `<div class="error" style="margin-top: 8px;">${escapeHtml(attempt.evaluationError)}</div>`;
                 }
-                steps.forEach((step, index) => {
+                steps.forEach((step) => {
                     const stepScore = step.score != null ? step.score : null;
-                    const scoreClass = stepScore != null
+                    const sClass = stepScore != null
                         ? (stepScore >= 76 ? 'high' : stepScore >= 50 ? 'medium' : 'low')
                         : 'unknown';
-                    const scoreDisplay = stepScore != null ? stepScore.toFixed(0) : 'Н/Д';
-                    const showOptimal = !!step.betterExample;
+                    const sDisplay = stepScore != null ? stepScore.toFixed(0) : '';
                     html += `
                         <div class="step-detail">
                             <div class="step-header">
-                                <div class="step-number">Вопрос ${step.order}</div>
-                                <div class="step-score ${scoreClass}">${scoreDisplay}/100</div>
+                                <div class="step-number">Шаг ${step.order}</div>
+                                ${sDisplay ? `<div class="step-score ${sClass}">${sDisplay}/100</div>` : ''}
                             </div>
-
                             <div class="question-box">
-                                <div class="question-label">Сообщение клиента</div>
+                                <div class="question-label">Клиент</div>
                                 <div class="question-text">${escapeHtml(step.customerMessage)}</div>
                             </div>
-
                             <div class="answer-box">
-                                <div class="answer-label">Ответ менеджера</div>
+                                <div class="answer-label">Менеджер</div>
                                 <div class="answer-text">${escapeHtml(step.answer)}</div>
                             </div>
-
                             ${step.feedback ? `
                                 <div class="feedback-box">
                                     <div class="feedback-label">Оценка</div>
                                     <div class="feedback-text">${escapeHtml(step.feedback)}</div>
-                                </div>
-                            ` : ''}
-
-                            ${showOptimal ? `
+                                </div>` : ''}
+                            ${step.betterExample ? `
                                 <div class="better-example-box">
                                     <div class="better-example-label">Лучший ответ</div>
                                     <div class="better-example-text">${escapeHtml(step.betterExample)}</div>
-                                </div>
-                            ` : ''}
-
-                            ${(step.criteriaScores && Object.keys(step.criteriaScores).length > 0) ? `
-                                <div style="margin-top: 8px;">
-                                    <div style="font-size: 12px; color: #999; margin-bottom: 4px;">Оценка по критериям:</div>
-                                    <div class="criteria-scores">
-                                        ${Object.entries(step.criteriaScores).map(([criterion, score]) => 
-                                            `<span class="criteria-badge">${criterion}: ${score}/5</span>`
-                                        ).join('')}
-                                    </div>
-                                </div>
-                            ` : ''}
-                        </div>
-                    `;
+                                </div>` : ''}
+                        </div>`;
                 });
 
                 detailsContainer.innerHTML = html;
