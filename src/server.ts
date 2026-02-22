@@ -1047,6 +1047,7 @@ app.get('/api/admin/voice-env-check', (_req, res) => {
   const VOX_ACCOUNT_ID = !!process.env.VOX_ACCOUNT_ID?.trim();
   const VOX_API_KEY = !!process.env.VOX_API_KEY?.trim();
   const VOX_APP_ID = !!process.env.VOX_APP_ID?.trim();
+  const VOX_CALLER_ID = !!process.env.VOX_CALLER_ID?.trim();
   const baseUrl = !!(process.env.VOICE_DIALOG_BASE_URL || process.env.MINI_APP_URL)?.trim();
   const voxKeys = Object.keys(process.env).filter((k) => k.startsWith('VOX_') || k.startsWith('VOICE_'));
   res.json({
@@ -1054,6 +1055,7 @@ app.get('/api/admin/voice-env-check', (_req, res) => {
     VOX_ACCOUNT_ID,
     VOX_API_KEY,
     VOX_APP_ID,
+    VOX_CALLER_ID,
     VOICE_DIALOG_BASE_URL_or_MINI_APP_URL: baseUrl,
     voxAndVoiceKeysInProcess: voxKeys.sort(),
   });
