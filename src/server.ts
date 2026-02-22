@@ -1042,6 +1042,23 @@ app.get('/api/admin/managers/:managerId/attempts', async (req, res) => {
   }
 });
 
+// Admin: diagnose voice env (no secrets — only presence). Remove after fixing Railway.
+app.get('/api/admin/voice-env-check', (_req, res) => {
+  const VOX_ACCOUNT_ID = !!process.env.VOX_ACCOUNT_ID?.trim();
+  const VOX_API_KEY = !!process.env.VOX_API_KEY?.trim();
+  const VOX_APP_ID = !!process.env.VOX_APP_ID?.trim();
+  const baseUrl = !!(process.env.VOICE_DIALOG_BASE_URL || process.env.MINI_APP_URL)?.trim();
+  const voxKeys = Object.keys(process.env).filter((k) => k.startsWith('VOX_') || k.startsWith('VOICE_'));
+  res.json({
+    ok: VOX_ACCOUNT_ID && VOX_API_KEY && VOX_APP_ID && baseUrl,
+    VOX_ACCOUNT_ID,
+    VOX_API_KEY,
+    VOX_APP_ID,
+    VOICE_DIALOG_BASE_URL_or_MINI_APP_URL: baseUrl,
+    voxAndVoiceKeysInProcess: voxKeys.sort(),
+  });
+});
+
 // Admin: test numbers for Call tab (from .env)
 app.get('/api/admin/test-numbers', (_req, res) => {
   try {
