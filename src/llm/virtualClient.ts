@@ -249,14 +249,19 @@ function extractMessageFromRaw(raw: string): string {
 }
 
 function parseVirtualClientOutput(raw: string, currentState: DialogState): VirtualClientOutput {
-  const cleaned = raw.replace(/^```json\s*|\s*```$/g, '').trim();
+  let cleaned = raw.replace(/^```json\s*|\s*```$/g, '').trim();
   let parsed: any;
 
   try {
     parsed = JSON.parse(cleaned);
   } catch {
-    console.warn('[virtualClient] JSON.parse failed, fallback. Raw:', cleaned.slice(0, 300));
-    return buildFallbackOutput(extractMessageFromRaw(cleaned), currentState);
+    cleaned = cleaned.replace(/,(\s*[}\]])/g, '$1');
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch {
+      console.warn('[virtualClient] JSON.parse failed, fallback. Raw:', cleaned.slice(0, 300));
+      return buildFallbackOutput(extractMessageFromRaw(cleaned), currentState);
+    }
   }
 
   const o = parsed && typeof parsed === 'object' ? parsed : {};

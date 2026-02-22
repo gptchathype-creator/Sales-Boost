@@ -127,7 +127,7 @@ VoxEngine.addEventListener(AppEvents.Started, function (e) {
       Logger.write("TTS say error: " + err);
     }
     if (typeof next === "function") {
-      setTimeout(next, Math.max(1500, Math.min(10000, text.length * 50)));
+      setTimeout(next, Math.max(700, Math.min(8000, text.length * 40)));
     }
   }
 
@@ -153,7 +153,7 @@ VoxEngine.addEventListener(AppEvents.Started, function (e) {
     setTimeout(function () {
       chunkPlaying = false;
       playChunkQueue(finalCallback);
-    }, Math.max(1200, Math.min(8000, (item || "").length * 45)));
+    }, Math.max(800, Math.min(6000, (item || "").length * 35)));
   }
 
   function startASR() {
@@ -231,25 +231,18 @@ VoxEngine.addEventListener(AppEvents.Started, function (e) {
     if (useStream && streamUrl) {
       chunkQueue = [];
       var streamFallbackTimer = null;
+      // First phrase via POST (reliable); WebSocket first frame often dropped by proxies (Railway etc.)
+      postDialog(dialogUrl, { call_id: callId }, function (firstReplyText, firstEndSession) {
+        if (sessionEnded) return;
+        sayAndThen(firstReplyText, function () {
+          if (sessionEnded) return;
+          onStreamReplyEnd(firstEndSession);
+        });
+      });
       try {
         ws = VoxEngine.createWebSocket(streamUrl);
         ws.onopen = function (ev) {
-          if (ws && ws.readyState === 1) {
-            ws.send(JSON.stringify({ call_id: callId }));
-            streamFallbackTimer = setTimeout(function () {
-              streamFallbackTimer = null;
-              if (chunkQueue.length === 0 && !chunkPlaying) {
-                Logger.write("voice stream: no reply in 12s, fallback to POST");
-                postDialog(dialogUrl, { call_id: callId }, function (replyText, endSession) {
-                  if (sessionEnded) return;
-                  sayAndThen(replyText, function () {
-                    if (sessionEnded) return;
-                    onStreamReplyEnd(endSession);
-                  });
-                });
-              }
-            }, 12000);
-          }
+          Logger.write("voice stream: WebSocket open, first phrase already via POST");
         };
         ws.onmessage = function (e) {
           if (streamFallbackTimer) {
