@@ -93,9 +93,10 @@ app.get('/health', (_req, res) => {
 
 // Voice call dialog: Voximplant scenario sends ASR text here, we return LLM reply for TTS
 app.post('/voice/dialog', (req, res) => {
+  console.log('[voice/dialog] POST received');
   handleVoiceDialog(req, res).catch((err) => {
     console.error('[voice/dialog] Unhandled:', err);
-    res.status(500).json({ error: 'Internal error', reply_text: '', end_session: false });
+    res.status(500).json({ error: 'Internal error', reply_text: 'Здравствуйте, произошла ошибка. Попробуйте позже.', end_session: false });
   });
 });
 
@@ -1192,7 +1193,7 @@ export function startServer(): Promise<void> {
     function attachVoiceStream(server: http.Server | https.Server): void {
       const wss = new WebSocketServer({ noServer: true });
       wss.on('connection', (ws, _req) => {
-        console.log('[voice/stream] Client connected');
+        console.log('[voice/stream] Client connected, waiting for message');
         ws.on('message', (data: Buffer | string) => {
           handleVoiceStreamMessage(ws, data.toString());
         });

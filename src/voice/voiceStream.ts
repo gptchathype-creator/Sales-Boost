@@ -18,7 +18,8 @@ function send(ws: WebSocket, obj: object): void {
 }
 
 export async function handleVoiceStreamMessage(ws: WebSocket, raw: string): Promise<void> {
-  console.log('[voice/stream] Message received, length:', raw?.length);
+  const len = raw?.length ?? 0;
+  console.log('[voice/stream] Message received, length:', len, 'preview:', (raw || '').slice(0, 80));
   let data: { call_id?: string; text?: string };
   try {
     data = JSON.parse(raw);
@@ -36,6 +37,8 @@ export async function handleVoiceStreamMessage(ws: WebSocket, raw: string): Prom
 
   try {
     const result = await getVoiceDialogReply(callId, managerText);
+    const replyLen = result?.reply_text?.length ?? 0;
+    console.log('[voice/stream] Reply length:', replyLen);
     const chunks = splitReplyIntoChunks(result.reply_text, CHUNK_MAX_LEN);
     console.log('[voice/stream] Sending', chunks.length, 'chunks');
     for (const chunk of chunks) {

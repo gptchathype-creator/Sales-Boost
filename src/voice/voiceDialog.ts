@@ -108,9 +108,17 @@ export interface VoiceDialogReply {
  * Core logic: get reply_text and end_session for a call_id and optional manager text.
  * Used by both POST /voice/dialog and WebSocket /voice/stream.
  */
+const FALLBACK_GREETING = 'Здравствуйте! Я увидел ваше объявление. Подскажите, товар ещё доступен?';
+
 export async function getVoiceDialogReply(callId: string, managerText?: string): Promise<VoiceDialogReply> {
   const text = typeof managerText === 'string' ? managerText.trim() : '';
-  const session = getOrCreateSession(callId);
+  let session: VoiceCallSession;
+  try {
+    session = getOrCreateSession(callId);
+  } catch (err) {
+    console.error('[voice/dialog] getOrCreateSession failed (e.g. loadCar):', err instanceof Error ? err.message : err);
+    return { reply_text: FALLBACK_GREETING, end_session: false };
+  }
   const { state, history, car, dealership, strictness, max_client_turns } = session;
 
   if (history.length === 0) {
@@ -146,8 +154,9 @@ export async function getVoiceDialogReply(callId: string, managerText?: string):
       };
     }
     applyDiagnosticsToState(state, out);
-    session.history.push({ role: 'client', content: out.client_message });
-    return { reply_text: out.client_message, end_session: out.end_conversation };
+    const firstReply = (out.client_message && out.client_message.trim()) || fallbackFirst;
+    session.history.push({ role: 'client', content: firstReply });
+    return { reply_text: firstReply, end_session: out.end_conversation };
   }
 
   if (!text) {
@@ -262,9 +271,8 @@ export async function handleVoiceDialog(req: Request, res: Response): Promise<vo
     res.json({ reply_text: result.reply_text, end_session: result.end_session });
   } catch (err) {
     console.error('[voice/dialog] Error:', err);
-    res.status(500).json({
-      error: err instanceof Error ? err.message : 'Unknown error',
-      reply_text: '',
+    res.status(200).json({
+      reply_text: FALLBACK_GREETING,
       end_session: false,
     });
   }
