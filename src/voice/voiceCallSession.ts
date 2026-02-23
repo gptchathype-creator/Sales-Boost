@@ -71,6 +71,8 @@ export async function finalizeVoiceCallSession(payload: VoxWebhookPayload): Prom
   const transcript =
     payloadTranscript.length > 0 ? payloadTranscript : (record?.transcript ?? []);
   const transcriptJson = JSON.stringify(transcript);
+  const transcriptSource = payloadTranscript.length > 0 ? 'webhook' : (record?.transcript?.length ? 'memory' : 'none');
+  console.log('[voice/session] transcript', { callId, source: transcriptSource, turns: transcript.length });
 
   let evaluationJson: string | null = null;
   let totalScore: number | null = null;
