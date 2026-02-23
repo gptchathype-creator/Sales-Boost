@@ -137,3 +137,21 @@ model AttemptAnswer {
 
   @@map("attempt_answers")
 }
+
+// Voice call session: one row per call (same phone can have many sessions = history of calls).
+model VoiceCallSession {
+  id               Int       @id @default(autoincrement())
+  callId           String    @unique  // UUID from start-voice-call
+  to               String    // normalized phone +7...
+  scenario         String?   // "dialog" | "realtime" | "realtime_pure"
+  startedAt        DateTime  @default(now())
+  endedAt          DateTime?
+  outcome          String?   // "completed" | "no_answer" | "busy" | "failed" | "disconnected"
+  durationSec      Int?      // talk time in seconds (null if no answer)
+  transcriptJson   String?   // JSON: [{ role: "manager"|"client", text: string }]
+  evaluationJson   String?   // same shape as TrainingSession.evaluationJson (V2)
+  totalScore       Float?    // 0-100
+  failureReason    String?   // if early fail
+
+  @@map("voice_call_sessions")
+}

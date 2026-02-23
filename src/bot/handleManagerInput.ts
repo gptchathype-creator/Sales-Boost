@@ -520,9 +520,7 @@ async function runEvaluationAndSend(
         evaluationJson: JSON.stringify(evaluation),
         totalScore: clampedScore,
       },
-    });
-
-    await ctx.reply(`📊 Ваша оценка:\n\n${formattedText}`);
+    });    await ctx.reply(`📊 Ваша оценка:\n\n${formattedText}`);
   } catch (e) {
     console.error('[training] Evaluation failed:', e instanceof Error ? e.message : e);
     await ctx.reply('📊 Не удалось сформировать детальную оценку. Результаты сохранены.');

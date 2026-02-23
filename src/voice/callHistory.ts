@@ -50,6 +50,11 @@ export function getCallHistory(limit: number = 50): VoiceCallRecord[] {
   return calls.slice(0, Math.min(limit, calls.length));
 }
 
+/** Get one call by callId (for webhook to finalize and persist). */
+export function getRecordByCallId(callId: string): VoiceCallRecord | undefined {
+  return byCallId.get(callId);
+}
+
 export function getTestNumbers(): string[] {
   const to = process.env.VOX_TEST_TO?.trim();
   const list = process.env.VOX_TEST_NUMBERS || '';

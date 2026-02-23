@@ -90,6 +90,19 @@
         .call-turn { margin-bottom: 6px; }
         .call-turn-manager { color: #1565c0; }
         .call-turn-client { color: #2e7d32; }
+        .call-meta-hint { font-size: 13px; color: var(--tg-theme-hint-color, #666); margin-bottom: 12px; }
+        .call-card.clickable { cursor: pointer; }
+        .call-card.clickable:hover { opacity: 0.95; }
+        .call-outcome { font-size: 12px; padding: 2px 8px; border-radius: 6px; }
+        .call-outcome.completed { background: #e8f5e9; color: #2e7d32; }
+        .call-outcome.no_answer { background: #fff3e0; color: #e65100; }
+        .call-outcome.busy { background: #fce4ec; color: #c2185b; }
+        .call-outcome.failed { background: #ffebee; color: #c62828; }
+        .call-outcome.in_progress { background: #e3f2fd; color: #1565c0; }
+        .call-card.in-progress { opacity: 0.95; }
+        .call-card.in-progress .call-outcome.in_progress { animation: pulse 1.5s ease-in-out infinite; }
+        @keyframes pulse { 50% { opacity: 0.8; } }
+        .call-duration { font-size: 13px; color: var(--tg-theme-hint-color, #666); }
 
         .card {
             background: var(--tg-theme-secondary-bg-color, #f8f8f8);
@@ -1147,6 +1160,12 @@
         <div id="callTab" class="tab-content">
             <div id="callTabContent">
                 <div class="call-form">
+                    <label>Сценарий</label>
+                    <select id="callScenario" class="filter-input call-select">
+                        <option value="dialog">Наш LLM (voice_dialog)</option>
+                        <option value="realtime">OpenAI Realtime (гибрид, наш бэкенд)</option>
+                        <option value="realtime_pure">OpenAI Realtime (чистый, только промпт)</option>
+                    </select>
                     <label>Номер телефона</label>
                     <div class="call-form-row">
                         <input type="tel" id="callPhoneInput" class="filter-input" placeholder="+7 999 123-45-67">
@@ -1157,11 +1176,16 @@
                     <button type="button" class="btn" id="callStartBtn" onclick="doStartCall()">Позвонить</button>
                     <p id="callStatus" class="call-status"></p>
                 </div>
-                <div class="call-history-section">
+                <div class="call-history-section" id="callListView">
                     <h3>История звонков</h3>
+                    <p class="call-meta-hint">По одному номеру — несколько карточек (история звонков). Не подняли трубку — видно в карточке.</p>
                     <div id="callHistoryList">
                         <div class="loading">Загрузка...</div>
                     </div>
+                </div>
+                <div id="callDetailView" style="display:none;">
+                    <button type="button" class="btn" style="margin-bottom:12px;" onclick="showCallList()">← К списку звонков</button>
+                    <div id="callDetails"></div>
                 </div>
             </div>
         </div>
@@ -1260,7 +1284,8 @@
 
         function switchTab(tab) {
             currentTab = tab;
-            
+            if (tab !== 'call') stopCallHistoryPolling();
+
             const tabs = document.querySelectorAll('.tab');
             const contents = document.querySelectorAll('.tab-content');
             const tabMap = { employees: 0, team: 1, expenses: 2, call: 3 };
@@ -1269,7 +1294,7 @@
                 if (tabMap[tab] === i) t.classList.add('active');
             });
             contents.forEach(c => c.classList.remove('active'));
-            
+
             if (tab === 'employees') {
                 document.getElementById('employeesTab').classList.add('active');
                 if (document.getElementById('listView').style.display !== 'none') {
@@ -1284,6 +1309,21 @@
             } else if (tab === 'call') {
                 document.getElementById('callTab').classList.add('active');
                 loadCallTab();
+                startCallHistoryPolling();
+            }
+        }
+
+        var callHistoryPollingId = null;
+        function startCallHistoryPolling() {
+            stopCallHistoryPolling();
+            callHistoryPollingId = setInterval(function() {
+                if (currentTab === 'call') loadCallTab();
+            }, 3000);
+        }
+        function stopCallHistoryPolling() {
+            if (callHistoryPollingId) {
+                clearInterval(callHistoryPollingId);
+                callHistoryPollingId = null;
             }
         }
 
@@ -1313,24 +1353,146 @@
             }
         }
 
+        const OUTCOME_LABELS = { completed: 'Разговор состоялся', no_answer: 'Не подняли', busy: 'Занято', failed: 'Ошибка', disconnected: 'Отключён' };
         function renderCallHistory(calls, container) {
             if (!calls.length) {
-                container.innerHTML = '<div class="empty">Нет звонков</div>';
+                container.innerHTML = '<div class="empty">Нет звонков. Звонки сохраняются после завершения (подняли/не подняли).</div>';
                 return;
             }
             container.innerHTML = calls.map(function(c) {
+                const inProgress = !c.endedAt;
                 const dateStr = c.startedAt ? new Date(c.startedAt).toLocaleString('ru-RU') : '—';
-                const transcriptHtml = (c.transcript && c.transcript.length)
-                    ? '<div class="call-transcript">' + c.transcript.map(function(t) {
-                        const who = t.role === 'manager' ? 'Менеджер' : 'Клиент';
-                        return '<div class="call-turn call-turn-' + t.role + '"><strong>' + who + ':</strong> ' + escapeHtml(t.text) + '</div>';
-                    }).join('') + '</div>'
-                    : '<div class="call-transcript empty">Нет транскрипта</div>';
-                return '<div class="call-card"><div class="call-card-header">' +
+                const outcome = inProgress ? 'in_progress' : (c.outcome || 'disconnected');
+                const outcomeLabel = inProgress ? 'Идёт звонок…' : (OUTCOME_LABELS[c.outcome] || c.outcome || 'Отключён');
+                const durationStr = c.durationSec != null ? (c.durationSec >= 60 ? (Math.floor(c.durationSec / 60) + ' мин ' + (c.durationSec % 60) + ' с') : c.durationSec + ' с') : (inProgress ? '—' : '—');
+                const scoreStr = c.totalScore != null ? c.totalScore.toFixed(0) + '/100' : (c.hasEvaluation ? 'Оценка есть' : '—');
+                const scoreClass = c.totalScore != null ? (c.totalScore >= 76 ? 'high' : c.totalScore >= 50 ? 'medium' : 'low') : '';
+                const cardClass = 'call-card' + (inProgress ? ' in-progress' : ' clickable');
+                const onclick = inProgress ? '' : ' onclick="showCallDetail(' + c.id + ')"';
+                return '<div class="' + cardClass + '"' + onclick + '>' +
+                    '<div class="call-card-header">' +
                     '<span class="call-to">' + escapeHtml(c.to) + '</span> ' +
                     '<span class="call-date">' + dateStr + '</span></div>' +
-                    transcriptHtml + '</div>';
+                    '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px;">' +
+                    '<span class="call-outcome ' + outcome + '">' + escapeHtml(outcomeLabel) + '</span>' +
+                    '<span class="call-duration">' + durationStr + '</span>' +
+                    (!inProgress && c.totalScore != null ? '<span class="score ' + scoreClass + '">' + scoreStr + '</span>' : '') +
+                    '</div>' +
+                    (!inProgress && c.transcript && c.transcript.length ? '<div class="call-transcript" style="max-height:80px;overflow:hidden;">' + c.transcript.slice(0, 2).map(function(t) {
+                        const who = t.role === 'manager' ? 'Менеджер' : 'Клиент';
+                        return '<div class="call-turn call-turn-' + t.role + '"><strong>' + who + ':</strong> ' + escapeHtml((t.text || '').slice(0, 80)) + (t.text && t.text.length > 80 ? '…' : '') + '</div>';
+                    }).join('') + '</div>' : (inProgress ? '<div class="call-transcript empty" style="font-size:13px;">Карточка обновится автоматически после завершения звонка.</div>' : '')) +
+                    '</div>';
             }).join('');
+        }
+
+        async function showCallDetail(id) {
+            const listView = document.getElementById('callListView');
+            const detailView = document.getElementById('callDetailView');
+            const detailsEl = document.getElementById('callDetails');
+            if (!listView || !detailView || !detailsEl) return;
+            listView.style.display = 'none';
+            detailView.style.display = 'block';
+            detailsEl.innerHTML = '<div class="loading">Загрузка...</div>';
+            try {
+                const res = await fetch(API_BASE + '/api/admin/call-history/' + id);
+                const c = await res.json();
+                if (!res.ok) throw new Error(c.error || 'Ошибка загрузки');
+                const score = c.totalScore;
+                const scoreDisplay = score != null ? score.toFixed(1) + '/100' : 'Н/Д';
+                const scoreClass = score != null ? (score >= 76 ? 'high' : score >= 50 ? 'medium' : 'low') : 'unknown';
+                const qualityTag = c.qualityTag || (score != null ? (score >= 76 ? 'Хорошо' : score >= 50 ? 'Средне' : 'Плохо') : null);
+                const badgeClass = qualityTag === 'Хорошо' ? 'good' : qualityTag === 'Средне' ? 'average' : qualityTag === 'Плохо' ? 'poor' : '';
+                let html = '';
+                if (score == null && !c.transcript) {
+                    html += '<div class="meta" style="margin-bottom:12px;color:var(--tg-theme-hint-color,#888);font-size:13px;">Оценка появляется после звонков с сохранённым диалогом (сценарий realtime_pure или dialog). Обновите сценарий в Voximplant для передачи транскрипта.</div>';
+                }
+                html += '<div class="card" style="cursor:default;">';
+                html += '<div class="card-header"><div class="card-title">' + escapeHtml(c.to) + '</div>';
+                if (qualityTag) html += '<span class="badge ' + badgeClass + '">' + escapeHtml(qualityTag) + '</span>';
+                html += '</div>';
+                html += '<div class="score ' + scoreClass + '">' + scoreDisplay + '</div>';
+                html += '<div class="meta">';
+                html += 'Исход: ' + (OUTCOME_LABELS[c.outcome] || c.outcome || '—') + '<br>';
+                html += 'Длительность: ' + (c.durationSec != null ? (c.durationSec >= 60 ? Math.floor(c.durationSec / 60) + ' мин ' + (c.durationSec % 60) + ' с' : c.durationSec + ' с') : '—') + '<br>';
+                html += 'Начало: ' + (c.startedAt ? new Date(c.startedAt).toLocaleString('ru-RU') : '—') + '<br>';
+                html += 'Конец: ' + (c.endedAt ? new Date(c.endedAt).toLocaleString('ru-RU') : '—');
+                html += '</div></div>';
+                // Общая оценка (как в боте): сильные стороны, слабые стороны, рекомендации
+                var hasGeneral = (c.strengths && c.strengths.length > 0) || (c.weaknesses && c.weaknesses.length > 0) || (c.recommendations && c.recommendations.length > 0);
+                if (hasGeneral) {
+                    html += '<div class="summary-section"><h2 class="summary-title">Общая оценка</h2>';
+                    if (c.strengths && c.strengths.length > 0) {
+                        html += '<div class="summary-block"><div class="summary-block-title">✅ Сильные стороны</div><ul class="summary-list">';
+                        c.strengths.forEach(function(s) { html += '<li>' + escapeHtml(s) + '</li>'; });
+                        html += '</ul></div>';
+                    }
+                    if (c.weaknesses && c.weaknesses.length > 0) {
+                        html += '<div class="summary-block"><div class="summary-block-title">⚠️ Слабые стороны</div><ul class="summary-list">';
+                        c.weaknesses.forEach(function(w) { html += '<li>' + escapeHtml(w) + '</li>'; });
+                        html += '</ul></div>';
+                    }
+                    if (c.recommendations && c.recommendations.length > 0) {
+                        html += '<div class="summary-block"><div class="summary-block-title">💡 Рекомендации</div><ul class="summary-list">';
+                        c.recommendations.forEach(function(r) { html += '<li>' + escapeHtml(r) + '</li>'; });
+                        html += '</ul></div>';
+                    }
+                    html += '</div>';
+                }
+                if (c.dimensionScores && Object.keys(c.dimensionScores).length > 0) {
+                    html += '<div class="summary-section"><h2 class="summary-title">📋 Оценка по направлениям</h2><div class="dimension-grid">';
+                    for (const [key, val] of Object.entries(c.dimensionScores)) {
+                        const label = DIMENSION_LABELS[key] || key;
+                        const color = val >= 76 ? '#2e7d32' : val >= 50 ? '#f57c00' : '#c62828';
+                        html += '<div class="dimension-card"><div class="dimension-label">' + escapeHtml(label) + '</div><div class="dimension-score" style="color:' + color + '">' + val + '</div><div class="dimension-bar"><div class="dimension-bar-fill" style="width:' + val + '%;background:' + color + '"></div></div></div>';
+                    }
+                    html += '</div></div>';
+                }
+                if (c.checklist && c.checklist.length > 0) {
+                    html += '<div class="summary-section"><h2 class="summary-title">📝 Чек-лист оценки</h2>';
+                    const STATUS_ICONS = { YES: '✓', PARTIAL: '~', NO: '✗', NA: '—' };
+                    c.checklist.forEach(function(item) {
+                        const icon = STATUS_ICONS[item.status] || '—';
+                        const statusCls = (item.status || 'na').toLowerCase();
+                        const label = CHECKLIST_LABELS[item.code] || item.code;
+                        html += '<div class="checklist-item"><div class="checklist-status ' + statusCls + '">' + icon + '</div><div class="checklist-body"><div class="checklist-title">' + escapeHtml(label) + (item.weight ? '<span class="checklist-weight">(вес: ' + item.weight + ')</span>' : '') + '</div>';
+                        if (item.comment) html += '<div class="checklist-comment">' + escapeHtml(item.comment) + '</div>';
+                        if (item.evidence && item.evidence.length) html += '<div class="checklist-evidence">«' + escapeHtml(item.evidence[0]) + '»</div>';
+                        html += '</div></div>';
+                    });
+                    html += '</div>';
+                }
+                if (c.issues && c.issues.length > 0) {
+                    html += '<div class="summary-section"><h2 class="summary-title">⚠️ Выявленные проблемы</h2>';
+                    c.issues.forEach(function(issue) {
+                        const sevCls = (issue.severity || 'low').toLowerCase();
+                        const sevLabel = SEVERITY_LABELS[issue.severity] || issue.severity;
+                        const typeLabel = ISSUE_TYPE_LABELS[issue.issue_type] || issue.issue_type;
+                        html += '<div class="issue-item ' + sevCls + '"><div class="issue-header"><span class="issue-severity-badge ' + sevCls + '">' + escapeHtml(sevLabel) + '</span><strong style="font-size:13px;">' + escapeHtml(typeLabel) + '</strong></div><div class="issue-text">' + escapeHtml(issue.recommendation || issue.issue_type || '') + '</div></div>';
+                    });
+                    html += '</div>';
+                }
+                // Диалог по шагам (как в боте): клиент/менеджер в блоках question-box / answer-box
+                if (c.transcript && c.transcript.length > 0) {
+                    html += '<h2 style="margin-bottom: 16px; font-size: 16px; font-weight: 600;">Диалог по шагам</h2>';
+                    c.transcript.forEach(function(t) {
+                        var isClient = t.role === 'client';
+                        var label = isClient ? 'Клиент' : 'Менеджер';
+                        var boxClass = isClient ? 'question-box' : 'answer-box';
+                        var innerClass = isClient ? 'question-text' : 'answer-text';
+                        html += '<div class="' + boxClass + '"><div class="' + (isClient ? 'question-label' : 'answer-label') + '">' + escapeHtml(label) + '</div><div class="' + innerClass + '">' + escapeHtml(t.text || '') + '</div></div>';
+                    });
+                }
+                detailsEl.innerHTML = html;
+            } catch (e) {
+                detailsEl.innerHTML = '<div class="error">Ошибка: ' + escapeHtml(e.message || String(e)) + '</div>';
+            }
+        }
+        function showCallList() {
+            const listView = document.getElementById('callListView');
+            const detailView = document.getElementById('callDetailView');
+            if (listView) listView.style.display = 'block';
+            if (detailView) detailView.style.display = 'none';
         }
 
         async function doStartCall() {
@@ -1347,11 +1509,13 @@
             btn.disabled = true;
             status.textContent = 'Инициируем звонок...';
             status.className = 'call-status';
+            var scenarioEl = document.getElementById('callScenario');
+            var scenario = (scenarioEl && scenarioEl.value) ? scenarioEl.value : 'dialog';
             try {
                 const res = await fetch(API_BASE + '/api/admin/start-voice-call', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ to: to })
+                    body: JSON.stringify({ to: to, scenario: scenario })
                 });
                 const data = await res.json().catch(function() { return {}; });
                 if (!res.ok) {
@@ -1359,7 +1523,8 @@
                     status.className = 'call-status error';
                     return;
                 }
-                status.textContent = 'Звонок инициирован. Номер: ' + (data.to || to);
+                var scenarioLabel = (scenario === 'realtime') ? ' (OpenAI Realtime, гибрид)' : (scenario === 'realtime_pure') ? ' (OpenAI Realtime, чистый)' : ' (наш LLM)';
+                status.textContent = 'Звонок инициирован. Номер: ' + (data.to || to) + scenarioLabel;
                 status.className = 'call-status ok';
                 loadCallTab();
             } catch (e) {
@@ -2232,6 +2397,8 @@
         window.loadAttempts = loadAttempts;
         window.showAttemptDetail = showAttemptDetail;
         window.showListView = showListView;
+        window.showCallDetail = showCallDetail;
+        window.showCallList = showCallList;
         window.switchTab = switchTab;
         window.toggleLevelFilter = toggleLevelFilter;
         window.toggleProblemFilter = toggleProblemFilter;

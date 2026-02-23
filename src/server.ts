@@ -12,6 +12,8 @@ import { handleVoiceDialog } from './voice/voiceDialog';
 import { handleVoiceStreamMessage } from './voice/voiceStream';
 import { addCall, getCallHistory, getTestNumbers } from './voice/callHistory';
 import { startVoiceCall } from './voice/startVoiceCall';
+import { finalizeVoiceCallSession } from './voice/voiceCallSession';
+import { getTunnelUrl } from './tunnel';
 
 const app = express();
 
@@ -1043,13 +1045,15 @@ app.get('/api/admin/managers/:managerId/attempts', async (req, res) => {
   }
 });
 
-// Admin: diagnose voice env (no secrets — only presence). Remove after fixing Railway.
+// Admin: diagnose voice env (no secrets — only presence). Uses live tunnel URL when available.
 app.get('/api/admin/voice-env-check', (_req, res) => {
   const VOX_ACCOUNT_ID = !!process.env.VOX_ACCOUNT_ID?.trim();
   const VOX_API_KEY = !!process.env.VOX_API_KEY?.trim();
   const VOX_APP_ID = !!process.env.VOX_APP_ID?.trim();
   const VOX_CALLER_ID = !!process.env.VOX_CALLER_ID?.trim();
-  const baseUrl = !!(process.env.VOICE_DIALOG_BASE_URL || process.env.MINI_APP_URL)?.trim();
+  const tunnelLive = !!getTunnelUrl()?.trim();
+  const baseUrlFromEnv = !!(process.env.VOICE_DIALOG_BASE_URL || process.env.MINI_APP_URL || process.env.PUBLIC_BASE_URL)?.trim();
+  const baseUrl = tunnelLive || baseUrlFromEnv;
   const voxKeys = Object.keys(process.env).filter((k) => k.startsWith('VOX_') || k.startsWith('VOICE_'));
   res.json({
     ok: VOX_ACCOUNT_ID && VOX_API_KEY && VOX_APP_ID && baseUrl,
@@ -1058,6 +1062,7 @@ app.get('/api/admin/voice-env-check', (_req, res) => {
     VOX_APP_ID,
     VOX_CALLER_ID,
     VOICE_DIALOG_BASE_URL_or_MINI_APP_URL: baseUrl,
+    tunnel_live: tunnelLive,
     voxAndVoiceKeysInProcess: voxKeys.sort(),
   });
 });
@@ -1086,26 +1091,121 @@ app.post('/api/admin/start-voice-call', async (req, res) => {
         error: 'Укажите номер (to) или задайте VOX_TEST_TO / VOX_TEST_NUMBERS в .env.',
       });
     }
-    const result = await startVoiceCall(to);
+    const scenario = (body.scenario === 'realtime' || body.scenario === 'realtime_pure' || body.scenario === 'dialog') ? body.scenario : undefined;
+    const result = await startVoiceCall(to, { scenario });
     if ('error' in result) {
       return res.status(400).json({ error: result.error });
     }
     addCall(result.callId, to);
-    res.json({ callId: result.callId, startedAt: result.startedAt, to });
+    const toNormalized = '+' + String(to).replace(/\D/g, '');
+    try {
+      await prisma.voiceCallSession.create({
+        data: {
+          callId: result.callId,
+          to: toNormalized,
+          scenario: result.scenario ?? 'dialog',
+          startedAt: new Date(result.startedAt),
+        },
+      });
+    } catch (e) {
+      console.warn('[voice] VoiceCallSession create (may already exist):', e instanceof Error ? e.message : e);
+    }
+    res.json({ callId: result.callId, startedAt: result.startedAt, to, scenario: result.scenario });
   } catch (err) {
     console.error('start-voice-call error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// Admin: call history with transcripts
-app.get('/api/admin/call-history', (req, res) => {
+// Voximplant webhook: call events (disconnected, failed, no_answer, busy)
+app.post('/webhooks/vox', async (req, res) => {
+  res.status(200).end();
+  const payload = req.body && typeof req.body === 'object' ? req.body : {};
+  const event = payload.event || payload.event_type;
+  if (['disconnected', 'failed', 'no_answer', 'busy'].includes(event)) {
+    finalizeVoiceCallSession(payload).catch((err) => {
+      console.error('[webhooks/vox] finalizeVoiceCallSession error:', err instanceof Error ? err.message : err);
+    });
+  }
+});
+
+// Admin: call history from DB (persisted; same phone = multiple cards)
+app.get('/api/admin/call-history', async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit as string) || 50;
-    const list = getCallHistory(limit);
-    res.json({ calls: list });
+    const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
+    const sessions = await prisma.voiceCallSession.findMany({
+      orderBy: { startedAt: 'desc' },
+      take: limit,
+    });
+    const calls = sessions.map((s) => ({
+      id: s.id,
+      callId: s.callId,
+      to: s.to,
+      scenario: s.scenario,
+      startedAt: s.startedAt.toISOString(),
+      endedAt: s.endedAt?.toISOString() ?? null,
+      outcome: s.outcome,
+      durationSec: s.durationSec,
+      transcript: s.transcriptJson ? (JSON.parse(s.transcriptJson) as Array<{ role: string; text: string }>) : [],
+      totalScore: s.totalScore,
+      hasEvaluation: !!s.evaluationJson,
+    }));
+    res.json({ calls });
   } catch (err) {
     console.error('call-history error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Admin: one call session detail (for card open: checklist, recommendations, transcript)
+app.get('/api/admin/call-history/:id', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ error: 'Invalid id' });
+    }
+    const session = await prisma.voiceCallSession.findFirst({
+      where: { id },
+    });
+    if (!session) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+    const transcript = session.transcriptJson
+      ? (JSON.parse(session.transcriptJson) as Array<{ role: string; text: string }>)
+      : [];
+    let evaluation: Record<string, unknown> | null = null;
+    if (session.evaluationJson) {
+      try {
+        evaluation = JSON.parse(session.evaluationJson) as Record<string, unknown>;
+      } catch (_) {}
+    }
+    const score = session.totalScore ?? (evaluation && typeof (evaluation as any).overall_score_0_100 === 'number' ? (evaluation as any).overall_score_0_100 : null);
+    const checklist = evaluation && Array.isArray((evaluation as any).checklist) ? (evaluation as any).checklist : [];
+    const issues = evaluation && Array.isArray((evaluation as any).issues) ? (evaluation as any).issues : [];
+    const recommendations = evaluation && Array.isArray((evaluation as any).recommendations) ? (evaluation as any).recommendations : [];
+    const dimensionScores = evaluation && (evaluation as any).dimension_scores ? (evaluation as any).dimension_scores : null;
+    const qualityTag = score != null ? (score >= 76 ? 'Хорошо' : score >= 50 ? 'Средне' : 'Плохо') : null;
+    res.json({
+      id: session.id,
+      callId: session.callId,
+      to: session.to,
+      scenario: session.scenario,
+      startedAt: session.startedAt,
+      endedAt: session.endedAt,
+      outcome: session.outcome,
+      durationSec: session.durationSec,
+      transcript,
+      totalScore: score,
+      qualityTag,
+      dimensionScores,
+      checklist,
+      issues,
+      recommendations,
+      strengths: checklist.filter((c: any) => c.status === 'YES').map((c: any) => c.comment || c.code),
+      weaknesses: issues.map((i: any) => (i.recommendation || i.issue_type) || ''),
+    });
+  } catch (err) {
+    console.error('call-history/:id error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

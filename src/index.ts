@@ -348,17 +348,20 @@ async function main() {
   try {
     console.log('Starting Sales Boost...');
 
-    // Production: MINI_APP_URL from env (Railway etc). Dev: tunnel for HTTPS
+    // Production: MINI_APP_URL from env (Railway etc). Dev: tunnel for HTTPS.
     const miniUrl = (process.env.MINI_APP_URL || '').trim().replace(/\/+$/, '');
     const isProduction = miniUrl.startsWith('https://') && !miniUrl.includes('localhost');
+    const isDevAdmin = process.env.ALLOW_DEV_ADMIN === 'true' || process.env.ALLOW_DEV_ADMIN === '1';
     (config as any).miniAppUrl = miniUrl || `http://localhost:${config.port}`;
 
     // 1. Start HTTP server
     await startServer();
     console.log('[OK] Web server: http://localhost:' + config.port);
 
-    // 2. Tunnel only in dev (no MINI_APP_URL or localhost). Production uses Railway URL.
-    if (!isProduction) {
+    // 2. In dev (or when ALLOW_DEV_ADMIN): always start tunnel so URL is always current.
+    //    When tunnel is ready, config.miniAppUrl and getTunnelUrl() are updated — no .env changes needed.
+    const shouldStartTunnel = !isProduction || isDevAdmin;
+    if (shouldStartTunnel) {
       const onTunnelUrl = (url: string) => {
         const clean = (url || '').trim().replace(/\/+$/, '');
         if (!clean) return;
