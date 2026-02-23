@@ -1122,6 +1122,8 @@ app.post('/webhooks/vox', async (req, res) => {
   res.status(200).end();
   const payload = req.body && typeof req.body === 'object' ? req.body : {};
   const event = payload.event || payload.event_type;
+  const hasTranscript = Array.isArray(payload.transcript);
+  console.log('[webhooks/vox] received', { event, callId: payload.call_id, keys: Object.keys(payload), transcriptTurns: hasTranscript ? payload.transcript.length : 0 });
   if (['disconnected', 'failed', 'no_answer', 'busy'].includes(event)) {
     finalizeVoiceCallSession(payload).catch((err) => {
       console.error('[webhooks/vox] finalizeVoiceCallSession error:', err instanceof Error ? err.message : err);

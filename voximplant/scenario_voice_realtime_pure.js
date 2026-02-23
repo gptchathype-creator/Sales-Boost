@@ -231,7 +231,10 @@ VoxEngine.addEventListener(AppEvents.Started, function (e) {
               if (item.content && Array.isArray(item.content)) {
                 for (var p = 0; p < item.content.length; p++) {
                   var pt = item.content[p];
-                  if (pt && pt.transcript != null && String(pt.transcript).trim()) textParts.push(String(pt.transcript).trim());
+                  if (!pt) continue;
+                  var t = (pt.transcript != null && String(pt.transcript).trim()) ? String(pt.transcript).trim()
+                    : (pt.text != null && String(pt.text).trim()) ? String(pt.text).trim() : "";
+                  if (t) textParts.push(t);
                 }
               }
               var fullText = textParts.join(" ").trim();
@@ -243,6 +246,21 @@ VoxEngine.addEventListener(AppEvents.Started, function (e) {
           });
         } catch (evErr) {
           Logger.write("voice_realtime_pure: addEventListener ConversationItemDone warning: " + evErr);
+        }
+
+        try {
+          if (OpenAI.RealtimeAPIEvents.ConversationItemInputAudioTranscriptionCompleted) {
+            realtimeClient.addEventListener(OpenAI.RealtimeAPIEvents.ConversationItemInputAudioTranscriptionCompleted, function (ev) {
+              if (sessionEnded || !realtimeClient) return;
+              var payload = (ev && ev.payload) ? ev.payload : (ev && ev.data) ? ev.data : ev || {};
+              var transcript = (payload.transcript != null) ? String(payload.transcript).trim() : "";
+              if (transcript) {
+                callTranscript.push({ role: "manager", text: transcript });
+              }
+            });
+          }
+        } catch (trErr) {
+          Logger.write("voice_realtime_pure: addEventListener InputAudioTranscriptionCompleted warning: " + trErr);
         }
 
         try {
