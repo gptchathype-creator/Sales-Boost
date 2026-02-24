@@ -9,7 +9,7 @@
   ],
   "scripts": {
     "dev": "tsx watch src/index.ts",
-  "build": "tsc",
+    "build": "tsc && vite build --config admin-frontend/vite.config.ts",
     "start": "node dist/src/index.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
