@@ -14,11 +14,12 @@ RUN npm ci
 COPY prisma ./prisma/
 RUN npx prisma generate
 
-# Build TypeScript
+# Build TypeScript + admin frontend
 COPY tsconfig.json ./
 COPY src ./src/
 COPY public ./public/
 COPY data ./data/
+COPY admin-frontend ./admin-frontend/
 RUN npm run build
 
 # Stage 2: Production
