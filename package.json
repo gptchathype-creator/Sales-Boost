@@ -9,7 +9,7 @@
   ],
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc && vite build --config admin-frontend/vite.config.ts",
+  "build": "tsc",
     "start": "node dist/src/index.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
@@ -38,6 +38,7 @@
     "@heroui/react": "^2.8.9",
     "@prisma/client": "^5.7.1",
     "@tailwindcss/postcss": "^4.2.1",
+    "@vitejs/plugin-react": "^5.1.4",
     "@vitejs/plugin-react-swc": "^4.2.3",
     "autoprefixer": "^10.4.24",
     "cloudflared": "^0.7.1",
