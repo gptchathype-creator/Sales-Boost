@@ -13,6 +13,42 @@ import { handleVoiceStreamMessage } from './voice/voiceStream';
 import { addCall, getCallHistory, getTestNumbers } from './voice/callHistory';
 import { startVoiceCall } from './voice/startVoiceCall';
 import { finalizeVoiceCallSession } from './voice/voiceCallSession';
+
+// ---- In-memory cache for admin analytics (Team / Voice dashboard) ----
+type TeamSummaryCache = {
+  totalAttempts: number;
+  avgScore: number;
+  levelCounts: { Junior: number; Middle: number; Senior: number };
+  topWeaknesses: { weakness: string; count: number }[];
+  topStrengths: { strength: string; count: number }[];
+  expertSummary: unknown;
+};
+
+type VoiceDashboardCache = {
+  totalCalls: number;
+  answeredPercent: number;
+  missedPercent: number;
+  avgDurationSec: number;
+  outcomeBreakdown: {
+    completed: number;
+    no_answer: number;
+    busy: number;
+    failed: number;
+    disconnected: number;
+  };
+};
+
+const ANALYTICS_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+let teamSummaryCache: { data: TeamSummaryCache | null; expiresAt: number } = {
+  data: null,
+  expiresAt: 0,
+};
+
+let voiceDashboardCache: { data: VoiceDashboardCache | null; expiresAt: number } = {
+  data: null,
+  expiresAt: 0,
+};
 import { getTunnelUrl } from './tunnel';
 
 const app = express();
@@ -673,9 +709,14 @@ app.get('/api/admin/attempts', async (req, res) => {
   }
 });
 
-// Get team summary
+// Get team summary (training & attempts) with in-memory snapshot cache
 app.get('/api/admin/summary', async (req, res) => {
   try {
+    const now = Date.now();
+    if (teamSummaryCache.data && teamSummaryCache.expiresAt > now) {
+      return res.json(teamSummaryCache.data);
+    }
+
     const [attempts, trainingSessions] = await Promise.all([
       prisma.attempt.findMany({
         where: { status: 'completed', totalScore: { not: null } },
@@ -700,14 +741,16 @@ app.get('/api/admin/summary', async (req, res) => {
     const totalItems = attempts.length + trainingSessions.length;
 
     if (totalItems === 0) {
-      return res.json({
+      const empty: TeamSummaryCache = {
         totalAttempts: 0,
         avgScore: 0,
         levelCounts: { Junior: 0, Middle: 0, Senior: 0 },
         topWeaknesses: [],
         topStrengths: [],
         expertSummary: null,
-      });
+      };
+      teamSummaryCache = { data: empty, expiresAt: now + ANALYTICS_TTL_MS };
+      return res.json(empty);
     }
 
     const totalScoreAttempts = attempts.reduce((sum, a) => sum + (a.totalScore || 0), 0);
@@ -866,16 +909,91 @@ app.get('/api/admin/summary', async (req, res) => {
       // Continue without expert summary if generation fails
     }
 
-    res.json({
+    const payload: TeamSummaryCache = {
       totalAttempts: totalItems,
       avgScore: Math.round(avgScore * 10) / 10,
       levelCounts,
       topWeaknesses,
       topStrengths,
       expertSummary,
-    });
+    };
+    teamSummaryCache = { data: payload, expiresAt: now + ANALYTICS_TTL_MS };
+    res.json(payload);
   } catch (error) {
     console.error('Get summary error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Voice calls dashboard (telephony availability) with in-memory snapshot cache
+app.get('/api/admin/voice-dashboard', async (_req, res) => {
+  try {
+    const now = Date.now();
+    if (voiceDashboardCache.data && voiceDashboardCache.expiresAt > now) {
+      return res.json(voiceDashboardCache.data);
+    }
+
+    const calls = await prisma.voiceCallSession.findMany();
+    if (!calls.length) {
+      const empty: VoiceDashboardCache = {
+        totalCalls: 0,
+        answeredPercent: 0,
+        missedPercent: 0,
+        avgDurationSec: 0,
+        outcomeBreakdown: {
+          completed: 0,
+          no_answer: 0,
+          busy: 0,
+          failed: 0,
+          disconnected: 0,
+        },
+      };
+      voiceDashboardCache = { data: empty, expiresAt: now + ANALYTICS_TTL_MS };
+      return res.json(empty);
+    }
+
+    const breakdown: VoiceDashboardCache['outcomeBreakdown'] = {
+      completed: 0,
+      no_answer: 0,
+      busy: 0,
+      failed: 0,
+      disconnected: 0,
+    };
+
+    let totalDuration = 0;
+    let durationCount = 0;
+
+    for (const c of calls) {
+      const key = (c.outcome || 'disconnected') as keyof typeof breakdown;
+      if (breakdown[key] !== undefined) {
+        breakdown[key] += 1;
+      } else {
+        breakdown.disconnected += 1;
+      }
+      if (typeof c.durationSec === 'number' && c.durationSec > 0) {
+        totalDuration += c.durationSec;
+        durationCount += 1;
+      }
+    }
+
+    const total = calls.length;
+    const answered = breakdown.completed;
+    const missed = total - answered;
+    const answeredPercent = total > 0 ? Math.round((answered / total) * 100) : 0;
+    const missedPercent = total > 0 ? Math.round((missed / total) * 100) : 0;
+    const avgDurationSec = durationCount > 0 ? Math.round(totalDuration / durationCount) : 0;
+
+    const payload: VoiceDashboardCache = {
+      totalCalls: total,
+      answeredPercent,
+      missedPercent,
+      avgDurationSec,
+      outcomeBreakdown: breakdown,
+    };
+    voiceDashboardCache = { data: payload, expiresAt: now + ANALYTICS_TTL_MS };
+    res.json(payload);
+  } catch (error) {
+    console.error('Get voice-dashboard error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
