@@ -62,6 +62,7 @@ VoxEngine.addEventListener(AppEvents.Started, function (e) {
     Logger.write("voice_realtime: Failed to parse customData: " + err);
   }
 
+  var voxSessionId = (e && (e.sessionId != null)) ? e.sessionId : null;
   var callId = data.call_id || ("call_" + Date.now());
   var to = data.to;
   var eventUrl = data.event_url;
@@ -107,6 +108,7 @@ VoxEngine.addEventListener(AppEvents.Started, function (e) {
       event: "disconnected",
       ts: new Date().toISOString(),
       details: details || {},
+      vox_session_id: voxSessionId,
     });
     VoxEngine.terminate();
   }

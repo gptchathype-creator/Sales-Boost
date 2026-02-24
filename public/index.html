@@ -99,8 +99,10 @@
         .call-outcome.busy { background: #fce4ec; color: #c2185b; }
         .call-outcome.failed { background: #ffebee; color: #c62828; }
         .call-outcome.in_progress { background: #e3f2fd; color: #1565c0; }
+        .call-outcome.processing { background: #ede7f6; color: #5e35b1; }
         .call-card.in-progress { opacity: 0.95; }
         .call-card.in-progress .call-outcome.in_progress { animation: pulse 1.5s ease-in-out infinite; }
+        .call-card.processing { opacity: 0.85; cursor: default; }
         @keyframes pulse { 50% { opacity: 0.8; } }
         .call-duration { font-size: 13px; color: var(--tg-theme-hint-color, #666); }
 
@@ -1365,10 +1367,17 @@
                 const outcome = inProgress ? 'in_progress' : (c.outcome || 'disconnected');
                 const outcomeLabel = inProgress ? 'Идёт звонок…' : (OUTCOME_LABELS[c.outcome] || c.outcome || 'Отключён');
                 const durationStr = c.durationSec != null ? (c.durationSec >= 60 ? (Math.floor(c.durationSec / 60) + ' мин ' + (c.durationSec % 60) + ' с') : c.durationSec + ' с') : (inProgress ? '—' : '—');
-                const scoreStr = c.totalScore != null ? c.totalScore.toFixed(0) + '/100' : (c.hasEvaluation ? 'Оценка есть' : '—');
                 const scoreClass = c.totalScore != null ? (c.totalScore >= 76 ? 'high' : c.totalScore >= 50 ? 'medium' : 'low') : '';
-                const cardClass = 'call-card' + (inProgress ? ' in-progress' : ' clickable');
-                const onclick = inProgress ? '' : ' onclick="showCallDetail(' + c.id + ')"';
+                const isProcessing = !inProgress && !!c.isProcessing;
+                const isReady = !inProgress && !!c.hasEvaluation;
+                const hasError = !inProgress && !c.hasEvaluation && !!c.processingError;
+                const stageLabel = c.processingStage === 'transcript'
+                    ? 'Расшифровка…'
+                    : c.processingStage === 'evaluation'
+                        ? 'Оценка…'
+                        : 'Обработка…';
+                const cardClass = 'call-card' + (inProgress ? ' in-progress' : (isReady ? ' clickable' : (isProcessing ? ' processing' : '')));
+                const onclick = isReady ? ' onclick="showCallDetail(' + c.id + ')"' : '';
                 return '<div class="' + cardClass + '"' + onclick + '>' +
                     '<div class="call-card-header">' +
                     '<span class="call-to">' + escapeHtml(c.to) + '</span> ' +
@@ -1376,12 +1385,20 @@
                     '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px;">' +
                     '<span class="call-outcome ' + outcome + '">' + escapeHtml(outcomeLabel) + '</span>' +
                     '<span class="call-duration">' + durationStr + '</span>' +
-                    (!inProgress && c.totalScore != null ? '<span class="score ' + scoreClass + '">' + scoreStr + '</span>' : '') +
+                    (isReady && c.totalScore != null ? '<span class="score ' + scoreClass + '">' + (c.totalScore.toFixed(0) + '/100') + '</span>' : '') +
+                    (isProcessing ? '<span class="call-outcome processing">' + escapeHtml(stageLabel) + '</span>' : '') +
+                    (hasError ? '<span class="call-outcome failed">Ошибка обработки</span>' : '') +
                     '</div>' +
                     (!inProgress && c.transcript && c.transcript.length ? '<div class="call-transcript" style="max-height:80px;overflow:hidden;">' + c.transcript.slice(0, 2).map(function(t) {
                         const who = t.role === 'manager' ? 'Менеджер' : 'Клиент';
                         return '<div class="call-turn call-turn-' + t.role + '"><strong>' + who + ':</strong> ' + escapeHtml((t.text || '').slice(0, 80)) + (t.text && t.text.length > 80 ? '…' : '') + '</div>';
                     }).join('') + '</div>' : (inProgress ? '<div class="call-transcript empty" style="font-size:13px;">Карточка обновится автоматически после завершения звонка.</div>' : '')) +
+                    (!inProgress && (!c.transcript || !c.transcript.length) && isProcessing
+                        ? '<div class="call-transcript empty" style="font-size:13px;">Идёт обработка звонка. Карточка обновится автоматически (обычно 10–30 секунд).</div>'
+                        : '') +
+                    (!inProgress && (!c.transcript || !c.transcript.length) && !isProcessing && !isReady
+                        ? '<div class="call-transcript empty" style="font-size:13px;">Диалог не найден — оценка недоступна.</div>'
+                        : '') +
                     '</div>';
             }).join('');
         }
@@ -1399,13 +1416,18 @@
                 const c = await res.json();
                 if (!res.ok) throw new Error(c.error || 'Ошибка загрузки');
                 const score = c.totalScore;
-                const scoreDisplay = score != null ? score.toFixed(1) + '/100' : 'Н/Д';
+                const scoreDisplay = score != null ? score.toFixed(1) + '/100' : (c.isProcessing ? 'Обработка…' : 'Н/Д');
                 const scoreClass = score != null ? (score >= 76 ? 'high' : score >= 50 ? 'medium' : 'low') : 'unknown';
                 const qualityTag = c.qualityTag || (score != null ? (score >= 76 ? 'Хорошо' : score >= 50 ? 'Средне' : 'Плохо') : null);
                 const badgeClass = qualityTag === 'Хорошо' ? 'good' : qualityTag === 'Средне' ? 'average' : qualityTag === 'Плохо' ? 'poor' : '';
                 let html = '';
-                if (score == null && !c.transcript) {
-                    html += '<div class="meta" style="margin-bottom:12px;color:var(--tg-theme-hint-color,#888);font-size:13px;">Оценка появляется после звонков с сохранённым диалогом (сценарий realtime_pure или dialog). Обновите сценарий в Voximplant для передачи транскрипта.</div>';
+                if (c.isProcessing) {
+                    const stage = c.processingStage === 'transcript' ? 'Расшифровка разговора…' : c.processingStage === 'evaluation' ? 'Оценка диалога…' : 'Обработка…';
+                    html += '<div class="meta" style="margin-bottom:12px;color:var(--tg-theme-hint-color,#888);font-size:13px;">' + escapeHtml(stage) + ' Обновите через пару секунд — вкладка «Звонок» обновляется автоматически.</div>';
+                } else if (score == null && (!c.transcript || !c.transcript.length)) {
+                    html += '<div class="meta" style="margin-bottom:12px;color:var(--tg-theme-hint-color,#888);font-size:13px;">Оценка появляется после звонков с сохранённым диалогом (сценарий realtime_pure или dialog). Если это realtime_pure — убедитесь, что сценарий в Voximplant обновлён (он должен передавать vox_session_id).</div>';
+                } else if (!c.hasEvaluation && c.processingError) {
+                    html += '<div class="meta" style="margin-bottom:12px;color:var(--tg-theme-destructive-text-color,#c62828);font-size:13px;">Ошибка обработки: ' + escapeHtml(c.processingError) + '</div>';
                 }
                 html += '<div class="card" style="cursor:default;">';
                 html += '<div class="card-header"><div class="card-title">' + escapeHtml(c.to) + '</div>';

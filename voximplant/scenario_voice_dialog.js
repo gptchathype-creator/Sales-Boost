@@ -68,6 +68,7 @@ VoxEngine.addEventListener(AppEvents.Started, function (e) {
     Logger.write("Failed to parse customData: " + err);
   }
 
+  var voxSessionId = (e && (e.sessionId != null)) ? e.sessionId : null;
   var callId = data.call_id || ("call_" + Date.now());
   var to = data.to;
   var eventUrl = data.event_url;
@@ -109,6 +110,7 @@ VoxEngine.addEventListener(AppEvents.Started, function (e) {
       ts: new Date().toISOString(),
       details: extra || {},
     };
+    if (voxSessionId != null) payload.vox_session_id = voxSessionId;
     if (tag) {
       payload.details.tag = tag;
     }

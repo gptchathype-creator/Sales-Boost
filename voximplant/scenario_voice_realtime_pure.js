@@ -6,6 +6,7 @@
 // customData: { call_id, to, event_url, caller_id, openai_api_key [, instructions ] }
 
 require(Modules.OpenAI);
+require(Modules.WebSocket);
 
 var REALTIME_INSTRUCTIONS = [
   "=== РОЛЬ (КРИТИЧНО) ===",
@@ -17,6 +18,9 @@ var REALTIME_INSTRUCTIONS = [
   "",
   "=== ЕСЛИ ТЕБЯ ПЕРЕБИЛИ (КРИТИЧНО) ===",
   "Когда менеджер тебя перебил (ты не договорил фразу), в истории уже есть твоя предыдущая реплика (полная или обрезанная). ЗАПРЕЩЕНО повторять её с начала или произносить ту же фразу заново. Действуй так: 1) Если перебили на приветствии — считай, что приветствие уже было; ответь коротко («Да, здравствуйте» / «Добрый день») и перейди к сути или дождись следующего вопроса. 2) Если перебили в середине любой другой фразы — не начинай её заново; ответь на то, что сказал менеджер, или продолжай мысль с того места, где остановились, одним коротким предложением. Никогда не копируй одну и ту же длинную реплику дважды. Никогда не «прыгай» на другую тему из-за перебивания — оставайся в контексте диалога.",
+  "",
+  "=== ПЕРЕБИЛИ НА ПЕРВОЙ ФРАЗЕ (про объявление / Chery) ===",
+  "Если ты начал говорить «Здравствуйте! Я увидел объявление о Chery Arrizo 8…» и тебя перебил менеджер («Алло», «Слушаю», «Здравствуйте» и т.п.) — НЕ повторяй эту длинную фразу целиком. Считай, что приветствие и вопрос уже прозвучали (или менеджер их понял). Ответь ОДНИМ коротким предложением: только «Да, здравствуйте» или «Добрый день», и при необходимости один короткий вопрос: «По объявлению про Chery Arrizo 8 — он ещё в наличии?» Либо просто «Да, здравствуйте» и жди следующей реплики менеджера. Никогда не произноси заново полную фразу «Здравствуйте! Я увидел объявление о Chery Arrizo 8 1.6 AMT 2023 года. Он ещё доступен?» после того, как тебя перебили.",
   "",
   "=== ФАЗЫ ДИАЛОГА (следуй по порядку) ===",
   "1) first_contact — ты позвонил по объявлению. Жди, что менеджер представится, назовёт салон и уточнит машину. Если не представился — не упрекай вслух, просто двигай разговор дальше.",
@@ -77,6 +81,7 @@ VoxEngine.addEventListener(AppEvents.Started, function (e) {
     Logger.write("voice_realtime_pure: Failed to parse customData: " + err);
   }
 
+  var voxSessionId = (e && (e.sessionId != null)) ? e.sessionId : null;
   var callId = data.call_id || ("call_" + Date.now());
   var to = data.to;
   var eventUrl = data.event_url;
@@ -138,6 +143,7 @@ VoxEngine.addEventListener(AppEvents.Started, function (e) {
       details: details || {},
     };
     if (callTranscript.length > 0) payload.transcript = callTranscript;
+    if (voxSessionId != null) payload.vox_session_id = voxSessionId;
     postEvent(eventUrl, payload);
     VoxEngine.terminate();
   }
@@ -198,54 +204,217 @@ VoxEngine.addEventListener(AppEvents.Started, function (e) {
         try {
           realtimeClient.addEventListener(OpenAI.RealtimeAPIEvents.ConversationItemDone, function (ev) {
             if (sessionEnded || !realtimeClient) return;
-            var payload = (ev && ev.payload) ? ev.payload : (ev && ev.data) ? ev.data : ev || {};
-            var item = (payload && payload.item) ? payload.item : (ev && ev.item) ? ev.item : null;
-            if (!item) return;
-            if (item.type === "function_call" && item.name === "end_call") {
-              var args = {};
-              var rawArgs = (item.arguments != null && typeof item.arguments === "string") ? item.arguments.trim() : "";
-              try {
-                args = rawArgs ? JSON.parse(rawArgs) : {};
-              } catch (e) {
-                Logger.write("voice_realtime_pure: end_call args parse error: " + e);
-              }
-              var reason = (args && args.reason) ? String(args.reason) : "script_end";
-              Logger.write("voice_realtime_pure: end_call requested, reason=" + reason);
-              scheduleHangup(reason);
-              return;
-            }
-            if (item.role === "assistant" && item.content && Array.isArray(item.content)) {
-              for (var c = 0; c < item.content.length; c++) {
-                var part = item.content[c];
-                var transcript = (part && part.transcript != null) ? String(part.transcript) : "";
-                if (transcriptLooksLikeGoodbye(transcript)) {
-                  Logger.write("voice_realtime_pure: goodbye detected in transcript, scheduling hangup");
-                  scheduleHangup("goodbye_transcript");
-                  return;
-                }
-              }
-            }
-            // Collect transcript for backend evaluation (user = manager, assistant = client)
-            if (item.role === "user" || item.role === "assistant") {
-              var textParts = [];
-              if (item.content && Array.isArray(item.content)) {
-                for (var p = 0; p < item.content.length; p++) {
-                  var pt = item.content[p];
-                  if (!pt) continue;
-                  var t = (pt.transcript != null && String(pt.transcript).trim()) ? String(pt.transcript).trim()
-                    : (pt.text != null && String(pt.text).trim()) ? String(pt.text).trim() : "";
-                  if (t) textParts.push(t);
-                }
-              }
-              var fullText = textParts.join(" ").trim();
-              if (fullText) {
-                var backRole = item.role === "user" ? "manager" : "client";
-                callTranscript.push({ role: backRole, text: fullText });
-              }
-            }
+            handleConversationItemDone(ev);
           });
         } catch (evErr) {
           Logger.write("voice_realtime_pure: addEventListener ConversationItemDone warning: " + evErr);
+        }
+        try {
+          realtimeClient.addEventListener("ConversationItemDone", function (ev) {
+            if (sessionEnded || !realtimeClient) return;
+            handleConversationItemDone(ev);
+          });
+        } catch (e2) {}
+
+        // Per Voximplant docs: openai.on(OpenAI.Events.WebSocketMessage, (msg) => ...) to get transcript.
+        // User speech: msg.type === 'conversation.item.input_audio_transcription.completed' → msg.transcript
+        // Assistant: response.output_audio_transcript.done or conversation.item.done with item.content[].transcript
+        try {
+          var onMsg = function (msg) {
+            if (sessionEnded || !realtimeClient) return;
+            var type = (msg && msg.type) ? msg.type : (msg && msg.payload && msg.payload.type) ? msg.payload.type : "";
+            var customEv = (msg && msg.customEvent) ? msg.customEvent : "";
+            var payload = (msg && msg.payload) ? msg.payload : msg || {};
+            var isInputTranscription = (type === "conversation.item.input_audio_transcription.completed") || (customEv === "ConversationItemInputAudioTranscriptionCompleted");
+            var isOutputTranscriptDone = (type === "response.output_audio_transcript.done") || (customEv === "ResponseOutputAudioTranscriptDone");
+            var isItemDone = (type === "conversation.item.done") || (customEv === "ConversationItemDone");
+            if (isInputTranscription) {
+              var ut = (msg.transcript != null) ? String(msg.transcript).trim() : (payload.transcript != null) ? String(payload.transcript).trim() : "";
+              if (ut) {
+                callTranscript.push({ role: "manager", text: ut });
+                Logger.write("voice_realtime_pure: transcript turn manager (" + callTranscript.length + " total)");
+              }
+              return;
+            }
+            if (isOutputTranscriptDone) {
+              var at = (msg.transcript != null) ? String(msg.transcript).trim() : (payload.transcript != null) ? String(payload.transcript).trim() : "";
+              if (at) {
+                callTranscript.push({ role: "client", text: at });
+                Logger.write("voice_realtime_pure: transcript turn client (" + callTranscript.length + " total)");
+              }
+              return;
+            }
+            if (isItemDone && payload.item) {
+              handleConversationItemDone({ payload: payload });
+            }
+          };
+          if (typeof OpenAI.Events !== "undefined" && OpenAI.Events && OpenAI.Events.WebSocketMessage) {
+            realtimeClient.addEventListener(OpenAI.Events.WebSocketMessage, onMsg);
+            Logger.write("voice_realtime_pure: subscribed to OpenAI.Events.WebSocketMessage");
+          } else {
+            Logger.write("voice_realtime_pure: OpenAI.Events.WebSocketMessage not available");
+          }
+        } catch (wsMsgErr) {
+          Logger.write("voice_realtime_pure: WebSocketMessage listener error: " + wsMsgErr);
+        }
+
+        // Official SDK events (same stream — bot already uses these for audio).
+        // ResponseAudioTranscriptDone = when assistant finishes one phrase; data has transcript.
+        try {
+          if (OpenAI.RealtimeAPIEvents.ResponseAudioTranscriptDone) {
+            realtimeClient.addEventListener(OpenAI.RealtimeAPIEvents.ResponseAudioTranscriptDone, function (client, data) {
+              if (sessionEnded || !realtimeClient) return;
+              data = data != null ? data : (client && client.data) ? client.data : {};
+              if (client && client.transcript != null) data = { transcript: client.transcript };
+              var t = (data.transcript != null && String(data.transcript).trim()) ? String(data.transcript).trim() : "";
+              if (t) {
+                callTranscript.push({ role: "client", text: t });
+                Logger.write("voice_realtime_pure: transcript turn client (" + callTranscript.length + " total)");
+              }
+            });
+          }
+        } catch (e3) {
+          Logger.write("voice_realtime_pure: ResponseAudioTranscriptDone listener: " + e3);
+        }
+        // ResponseOutputItemDone = when an output item (message) is done; may have item.content[].transcript.
+        try {
+          if (OpenAI.RealtimeAPIEvents.ResponseOutputItemDone) {
+            realtimeClient.addEventListener(OpenAI.RealtimeAPIEvents.ResponseOutputItemDone, function (client, data) {
+              if (sessionEnded || !realtimeClient) return;
+              var payload = (data && data.payload) ? data.payload : (data && data.item) ? { item: data } : (data != null ? data : {});
+              if (client && (client.payload || client.item)) payload = client.payload ? client.payload : { item: client.item };
+              handleConversationItemDone({ payload: payload });
+            });
+          }
+        } catch (e4) {
+          Logger.write("voice_realtime_pure: ResponseOutputItemDone listener: " + e4);
+        }
+
+        // Fallback: Vox delivers WebSocket messages to the client; hook onmessage so we see every message.
+        try {
+          Logger.write("voice_realtime_pure: client id=" + (realtimeClient.id ? realtimeClient.id() : "no-id") + " hasOnMessage=" + (typeof realtimeClient.onmessage));
+          var prevOnMessage = realtimeClient.onmessage;
+          realtimeClient.onmessage = function (ev) {
+            if (prevOnMessage) try { prevOnMessage(ev); } catch (e) {}
+            if (sessionEnded || !realtimeClient) return;
+            var text = (ev && ev.text) ? ev.text : (ev && ev.data != null) ? (typeof ev.data === "string" ? ev.data : String(ev.data)) : "";
+            if (!text) return;
+            try {
+              var parsed = JSON.parse(text);
+              if (!parsed || !parsed.customEvent) return;
+              if (parsed.customEvent === "ConversationItemDone" && parsed.payload) {
+                handleConversationItemDone({ payload: parsed.payload });
+                return;
+              }
+              if (parsed.customEvent === "ResponseOutputAudioTranscriptDone" && parsed.payload && parsed.payload.transcript != null) {
+                var t = String(parsed.payload.transcript).trim();
+                if (t) {
+                  callTranscript.push({ role: "client", text: t });
+                  Logger.write("voice_realtime_pure: transcript turn client (" + callTranscript.length + " total)");
+                }
+              }
+            } catch (parseErr) {}
+          };
+        } catch (onMsgErr) {
+          Logger.write("voice_realtime_pure: onmessage hook error: " + onMsgErr);
+        }
+
+        // Also try addEventListener(MESSAGE) in case the client is the WebSocket and uses that.
+        try {
+          if (typeof WebSocketEvents !== "undefined" && WebSocketEvents && WebSocketEvents.MESSAGE) {
+            realtimeClient.addEventListener(WebSocketEvents.MESSAGE, function (ev) {
+              if (sessionEnded || !realtimeClient) return;
+              var text = (ev && ev.text) ? ev.text : "";
+              if (!text) return;
+              try {
+                var parsed = JSON.parse(text);
+                if (parsed && parsed.customEvent === "ConversationItemDone" && parsed.payload) {
+                  handleConversationItemDone({ payload: parsed.payload });
+                } else if (parsed && parsed.customEvent === "ResponseOutputAudioTranscriptDone" && parsed.payload && parsed.payload.transcript != null) {
+                  var t = String(parsed.payload.transcript).trim();
+                  if (t) {
+                    callTranscript.push({ role: "client", text: t });
+                    Logger.write("voice_realtime_pure: transcript turn client (" + callTranscript.length + " total)");
+                  }
+                }
+              } catch (parseErr) {}
+            });
+            Logger.write("voice_realtime_pure: added WebSocketEvents.MESSAGE listener");
+          } else {
+            Logger.write("voice_realtime_pure: WebSocketEvents.MESSAGE not available");
+          }
+        } catch (wsErr) {
+          Logger.write("voice_realtime_pure: addEventListener MESSAGE error: " + wsErr);
+        }
+        try {
+          realtimeClient.addEventListener("Message", function (ev) {
+            if (sessionEnded || !realtimeClient) return;
+            var text = (ev && ev.text) ? ev.text : "";
+            if (!text) return;
+            try {
+              var parsed = JSON.parse(text);
+              if (parsed && parsed.customEvent === "ConversationItemDone" && parsed.payload) {
+                handleConversationItemDone({ payload: parsed.payload });
+              } else if (parsed && parsed.customEvent === "ResponseOutputAudioTranscriptDone" && parsed.payload && parsed.payload.transcript != null) {
+                var t = String(parsed.payload.transcript).trim();
+                if (t) {
+                  callTranscript.push({ role: "client", text: t });
+                  Logger.write("voice_realtime_pure: transcript turn client (" + callTranscript.length + " total)");
+                }
+              }
+            } catch (parseErr) {}
+          });
+          Logger.write("voice_realtime_pure: added Message (string) listener");
+        } catch (strErr) {
+          Logger.write("voice_realtime_pure: addEventListener Message string error: " + strErr);
+        }
+
+        function handleConversationItemDone(ev) {
+          var payload = (ev && ev.payload) ? ev.payload : (ev && ev.data) ? ev.data : ev || {};
+          var item = (payload && payload.item) ? payload.item : (ev && ev.item) ? ev.item : null;
+          if (!item) return;
+          if (item.type === "function_call" && item.name === "end_call") {
+            var args = {};
+            var rawArgs = (item.arguments != null && typeof item.arguments === "string") ? item.arguments.trim() : "";
+            try {
+              args = rawArgs ? JSON.parse(rawArgs) : {};
+            } catch (e) {
+              Logger.write("voice_realtime_pure: end_call args parse error: " + e);
+            }
+            var reason = (args && args.reason) ? String(args.reason) : "script_end";
+            Logger.write("voice_realtime_pure: end_call requested, reason=" + reason);
+            scheduleHangup(reason);
+            return;
+          }
+          if (item.role === "assistant" && item.content && Array.isArray(item.content)) {
+            for (var c = 0; c < item.content.length; c++) {
+              var part = item.content[c];
+              var transcript = (part && part.transcript != null) ? String(part.transcript) : "";
+              if (transcriptLooksLikeGoodbye(transcript)) {
+                Logger.write("voice_realtime_pure: goodbye detected in transcript, scheduling hangup");
+                scheduleHangup("goodbye_transcript");
+                return;
+              }
+            }
+          }
+          if (item.role === "user" || item.role === "assistant") {
+            var textParts = [];
+            if (item.content && Array.isArray(item.content)) {
+              for (var p = 0; p < item.content.length; p++) {
+                var pt = item.content[p];
+                if (!pt) continue;
+                var t = (pt.transcript != null && String(pt.transcript).trim()) ? String(pt.transcript).trim()
+                  : (pt.text != null && String(pt.text).trim()) ? String(pt.text).trim() : "";
+                if (t) textParts.push(t);
+              }
+            }
+            var fullText = textParts.join(" ").trim();
+            if (fullText) {
+              var backRole = item.role === "user" ? "manager" : "client";
+              callTranscript.push({ role: backRole, text: fullText });
+              Logger.write("voice_realtime_pure: transcript turn " + backRole + " (" + callTranscript.length + " total)");
+            }
+          }
         }
 
         try {
@@ -283,6 +452,11 @@ VoxEngine.addEventListener(AppEvents.Started, function (e) {
                     threshold: 0.5,
                     prefix_padding_ms: 250,
                     silence_duration_ms: 300,
+                  },
+                  // Enable input transcription so we get conversation.item.input_audio_transcription.completed (manager speech)
+                  transcription: {
+                    model: "whisper-1",
+                    language: "ru",
                   },
                 },
               },

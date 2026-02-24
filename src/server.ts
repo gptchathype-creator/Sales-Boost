@@ -1139,19 +1139,38 @@ app.get('/api/admin/call-history', async (req, res) => {
       orderBy: { startedAt: 'desc' },
       take: limit,
     });
-    const calls = sessions.map((s) => ({
-      id: s.id,
-      callId: s.callId,
-      to: s.to,
-      scenario: s.scenario,
-      startedAt: s.startedAt.toISOString(),
-      endedAt: s.endedAt?.toISOString() ?? null,
-      outcome: s.outcome,
-      durationSec: s.durationSec,
-      transcript: s.transcriptJson ? (JSON.parse(s.transcriptJson) as Array<{ role: string; text: string }>) : [],
-      totalScore: s.totalScore,
-      hasEvaluation: !!s.evaluationJson,
-    }));
+    const calls = sessions.map((s) => {
+      const transcript = s.transcriptJson
+        ? (JSON.parse(s.transcriptJson) as Array<{ role: string; text: string }>)
+        : [];
+      const hasEvaluation = !!s.evaluationJson;
+      const ended = !!s.endedAt;
+      const endedAtMs = s.endedAt ? s.endedAt.getTime() : null;
+      const ageSec = endedAtMs != null ? (Date.now() - endedAtMs) / 1000 : null;
+      const isRecent = ageSec != null && ageSec >= 0 && ageSec < 120;
+      // Avoid "stuck processing" forever when there is no transcript: only show processing for recent ended calls.
+      const isProcessing = ended && !hasEvaluation && !s.failureReason && (transcript.length >= 2 || isRecent);
+      const processingStage = ended && !hasEvaluation && isProcessing
+        ? (transcript.length >= 2 ? 'evaluation' : 'transcript')
+        : null;
+      return {
+        id: s.id,
+        callId: s.callId,
+        to: s.to,
+        scenario: s.scenario,
+        startedAt: s.startedAt.toISOString(),
+        endedAt: s.endedAt?.toISOString() ?? null,
+        outcome: s.outcome,
+        durationSec: s.durationSec,
+        transcript,
+        transcriptTurns: transcript.length,
+        totalScore: s.totalScore,
+        hasEvaluation,
+        isProcessing,
+        processingStage,
+        processingError: s.failureReason,
+      };
+    });
     res.json({ calls });
   } catch (err) {
     console.error('call-history error:', err);
@@ -1197,6 +1216,27 @@ app.get('/api/admin/call-history/:id', async (req, res) => {
       outcome: session.outcome,
       durationSec: session.durationSec,
       transcript,
+      transcriptTurns: transcript.length,
+      hasEvaluation: !!session.evaluationJson,
+      isProcessing: (() => {
+        const ended = !!session.endedAt;
+        const hasEval = !!session.evaluationJson;
+        const endedAtMs = session.endedAt ? session.endedAt.getTime() : null;
+        const ageSec = endedAtMs != null ? (Date.now() - endedAtMs) / 1000 : null;
+        const isRecent = ageSec != null && ageSec >= 0 && ageSec < 120;
+        return ended && !hasEval && !session.failureReason && (transcript.length >= 2 || isRecent);
+      })(),
+      processingStage: (() => {
+        const ended = !!session.endedAt;
+        const hasEval = !!session.evaluationJson;
+        const endedAtMs = session.endedAt ? session.endedAt.getTime() : null;
+        const ageSec = endedAtMs != null ? (Date.now() - endedAtMs) / 1000 : null;
+        const isRecent = ageSec != null && ageSec >= 0 && ageSec < 120;
+        const isProcessing = ended && !hasEval && !session.failureReason && (transcript.length >= 2 || isRecent);
+        if (!ended || hasEval || !isProcessing) return null;
+        return transcript.length >= 2 ? 'evaluation' : 'transcript';
+      })(),
+      processingError: session.failureReason,
       totalScore: score,
       qualityTag,
       dimensionScores,

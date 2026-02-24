@@ -8,6 +8,7 @@ import { getRecordByCallId, type TranscriptTurn } from './callHistory';
 import { loadCar } from '../data/carLoader';
 import { getDefaultState } from '../state/defaultState';
 import { evaluateSessionV2 } from '../llm/evaluatorV2';
+import { getTranscriptFromVoxLog } from './voxLogTranscript';
 
 export type VoxWebhookEvent = 'progress' | 'connected' | 'disconnected' | 'failed' | 'busy' | 'no_answer';
 
@@ -19,6 +20,8 @@ export interface VoxWebhookPayload {
   details?: Record<string, unknown> & { reason?: string; code?: number };
   /** Transcript from scenario (e.g. realtime_pure): [{ role: 'manager'|'client', text: string }] */
   transcript?: TranscriptTurn[] | unknown[];
+  /** Voximplant session id (from AppEvents.Started) — used to fetch session log and parse transcript if not sent */
+  vox_session_id?: number;
 }
 
 function normalizeOutcome(event: string, details?: { reason?: string; code?: number }): string {
@@ -55,7 +58,7 @@ export async function finalizeVoiceCallSession(payload: VoxWebhookPayload): Prom
 
   // Prefer transcript from webhook payload (e.g. realtime_pure sends it); fallback to in-memory record (dialog scenario)
   const rawPayloadTranscript = payload.transcript;
-  const payloadTranscript: TranscriptTurn[] =
+  let payloadTranscript: TranscriptTurn[] =
     Array.isArray(rawPayloadTranscript) &&
     rawPayloadTranscript.length > 0 &&
     rawPayloadTranscript.every(
@@ -68,16 +71,62 @@ export async function finalizeVoiceCallSession(payload: VoxWebhookPayload): Prom
     )
       ? (rawPayloadTranscript as TranscriptTurn[])
       : [];
-  const transcript =
-    payloadTranscript.length > 0 ? payloadTranscript : (record?.transcript ?? []);
-  const transcriptJson = JSON.stringify(transcript);
-  const transcriptSource = payloadTranscript.length > 0 ? 'webhook' : (record?.transcript?.length ? 'memory' : 'none');
+
+  const toNormalized = '+' + String(to).replace(/\D/g, '');
+
+  // 1) Save session immediately so admin shows "Processing..." right after hangup
+  const initialTranscript = payloadTranscript.length > 0 ? payloadTranscript : (record?.transcript ?? []);
+  try {
+    await prisma.voiceCallSession.upsert({
+      where: { callId },
+      create: {
+        callId,
+        to: toNormalized,
+        startedAt,
+        endedAt,
+        outcome,
+        durationSec,
+        transcriptJson: JSON.stringify(initialTranscript),
+        evaluationJson: null,
+        totalScore: null,
+        failureReason: null,
+      },
+      update: {
+        endedAt,
+        outcome,
+        durationSec,
+        transcriptJson: JSON.stringify(initialTranscript),
+      },
+    });
+  } catch (err) {
+    console.error('[voice/session] initial upsert error:', err instanceof Error ? err.message : err);
+  }
+
+  // 2) If transcript missing but we have vox_session_id (realtime_pure), fetch from Voximplant log and update
+  let transcript: TranscriptTurn[] = initialTranscript;
+  let transcriptSource: 'webhook' | 'memory' | 'vox_log' | 'none' =
+    payloadTranscript.length > 0 ? 'webhook' : (record?.transcript?.length ? 'memory' : 'none');
+
+  if (transcript.length === 0 && payload.vox_session_id != null) {
+    try {
+      await new Promise((r) => setTimeout(r, 2000));
+      const { transcript: logTranscript } = await getTranscriptFromVoxLog(payload.vox_session_id);
+      if (logTranscript.length > 0) {
+        transcript = logTranscript;
+        transcriptSource = 'vox_log';
+        await prisma.voiceCallSession.update({
+          where: { callId },
+          data: { transcriptJson: JSON.stringify(transcript) },
+        });
+      }
+    } catch (err) {
+      console.warn('[voice/session] getTranscriptFromVoxLog failed:', err instanceof Error ? err.message : err);
+    }
+  }
+
   console.log('[voice/session] transcript', { callId, source: transcriptSource, turns: transcript.length });
 
-  let evaluationJson: string | null = null;
-  let totalScore: number | null = null;
-  let failureReason: string | null = null;
-
+  // 3) Run evaluation (can take time) and update session when ready
   if (transcript.length >= 2) {
     try {
       const car = loadCar();
@@ -90,41 +139,28 @@ export async function finalizeVoiceCallSession(payload: VoxWebhookPayload): Prom
         earlyFail: false,
         behaviorSignals: [],
       });
-      evaluationJson = JSON.stringify(evaluation);
-      totalScore = evaluation.overall_score_0_100 ?? null;
-    } catch (err) {
-      console.error('[voice/session] evaluateSessionV2 error:', err instanceof Error ? err.message : err);
-    }
-  }
 
-  const toNormalized = '+' + String(to).replace(/\D/g, '');
-  try {
-    await prisma.voiceCallSession.upsert({
-      where: { callId },
-      create: {
-        callId,
-        to: toNormalized,
-        startedAt,
-        endedAt,
-        outcome,
-        durationSec,
-        transcriptJson,
-        evaluationJson,
-        totalScore,
-        failureReason,
-      },
-      update: {
-        endedAt,
-        outcome,
-        durationSec,
-        transcriptJson,
-        evaluationJson,
-        totalScore,
-        failureReason,
-      },
-    });
-    console.log('[voice/session] saved VoiceCallSession', { callId, to: payload.to, outcome, durationSec, hasEval: !!evaluationJson });
-  } catch (err) {
-    console.error('[voice/session] prisma.voiceCallSession upsert error:', err instanceof Error ? err.message : err);
+      const evaluationJson = JSON.stringify(evaluation);
+      const totalScore = evaluation.overall_score_0_100 ?? null;
+
+      await prisma.voiceCallSession.update({
+        where: { callId },
+        data: {
+          evaluationJson,
+          totalScore,
+          failureReason: null,
+        },
+      });
+      console.log('[voice/session] evaluation saved', { callId, totalScore });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[voice/session] evaluateSessionV2 error:', msg);
+      try {
+        await prisma.voiceCallSession.update({
+          where: { callId },
+          data: { failureReason: msg.slice(0, 200) },
+        });
+      } catch (_) {}
+    }
   }
 }
