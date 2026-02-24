@@ -160,33 +160,30 @@ function parseTranscriptFromLogText(logText: string): TranscriptTurn[] {
 
   const lines = logText.split(/\r?\n/);
   for (const line of lines) {
-    if (!line.includes('ConversationItemDone') && !line.includes('ResponseOutputAudioTranscriptDone')) continue;
+    if (!line.includes('customEvent')) continue;
 
-    // Loosely typed JSON parsing: log format can vary, use `any` to avoid brittle TS types.
+    // Vox logs format: ... text = {JSON} ; } ; ]
+    // Extract JSON that follows "text =" to avoid picking up other braces on the line.
+    const textIdx = line.indexOf('text =');
+    if (textIdx === -1) continue;
+    const jsonStart = line.indexOf('{', textIdx);
+    if (jsonStart === -1) continue;
+    const jsonEnd = line.indexOf('} ;', jsonStart);
+    if (jsonEnd === -1) continue;
+
     let obj: any = null;
-    const jsonMatch = line.match(/\{[\s\S]*"customEvent"[\s\S]*\}/);
-    if (jsonMatch) {
-      try {
-        obj = JSON.parse(jsonMatch[0]);
-      } catch {
-        continue;
-      }
-    }
-    if ((!obj || !obj.payload) && obj && obj.customEvent !== 'ResponseOutputAudioTranscriptDone') {
-      const alt = line.match(/\{[\s\S]*"payload"[\s\S]*\}/);
-      if (alt) {
-        try {
-          obj = JSON.parse(alt[0]);
-        } catch {
-          // ignore
-        }
-      }
+    try {
+      const jsonStr = line.slice(jsonStart, jsonEnd + 1);
+      obj = JSON.parse(jsonStr);
+    } catch {
+      continue;
     }
 
-    if (!obj) continue;
+    if (!obj || !obj.customEvent) continue;
 
     const customEvent = obj.customEvent || '';
 
+    // Assistant (bot) phrases from output transcript "done" events
     if (customEvent === 'ResponseOutputAudioTranscriptDone' && obj.payload?.transcript != null) {
       const text = String(obj.payload.transcript).trim();
       if (text) {
@@ -199,6 +196,20 @@ function parseTranscriptFromLogText(logText: string): TranscriptTurn[] {
       continue;
     }
 
+    // Manager (user) phrases from input audio transcription completed events
+    if (customEvent === 'ConversationItemInputAudioTranscriptionCompleted' && obj.payload?.transcript != null) {
+      const text = String(obj.payload.transcript).trim();
+      if (text) {
+        const key = `manager:${text.slice(0, 50)}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          turns.push({ role: 'manager', text });
+        }
+      }
+      continue;
+    }
+
+    // Fallback: full items with role + content[].transcript
     if (customEvent === 'ConversationItemDone' && obj.payload?.item) {
       const item = obj.payload.item;
       const role = item.role === 'user' ? 'manager' : item.role === 'assistant' ? 'client' : null;
