@@ -2,12 +2,20 @@
  * Fetch call session log from Voximplant and parse transcript from WebSocket messages.
  * Used when the scenario (e.g. realtime_pure) does not send transcript in the webhook:
  * we get it from the session log in the background without affecting call speed.
+ * Supports secure logs via JWT from a Voximplant service account.
  */
 
 import { request } from 'undici';
+import { createSign } from 'crypto';
 import type { TranscriptTurn } from './callHistory';
 
 const VOX_API_BASE = 'https://api.voximplant.com/platform_api';
+
+interface VoxServiceAccountCredentials {
+  account_id: number | string;
+  key_id: string;
+  private_key: string;
+}
 
 export interface GetTranscriptFromVoxLogResult {
   transcript: TranscriptTurn[];
@@ -76,7 +84,12 @@ export async function getTranscriptFromVoxLog(voxSessionId: number): Promise<Get
 
   let logBody: string;
   try {
-    const logRes = await request(logUrl, { method: 'GET' });
+    const jwt = createVoxJwt();
+    const headers: Record<string, string> = {};
+    if (jwt) {
+      headers['Authorization'] = `Bearer ${jwt}`;
+    }
+    const logRes = await request(logUrl, { method: 'GET', headers });
     logBody = await logRes.body.text();
     if (logRes.statusCode >= 400) {
       console.warn('[voxLogTranscript] Log fetch HTTP', logRes.statusCode);
@@ -90,6 +103,50 @@ export async function getTranscriptFromVoxLog(voxSessionId: number): Promise<Get
   const transcript = parseTranscriptFromLogText(logBody);
   console.log('[voxLogTranscript] Parsed from log', { voxSessionId, turns: transcript.length });
   return { transcript, source: 'vox_log' };
+}
+
+function base64url(input: Buffer | string): string {
+  return Buffer.from(input)
+    .toString('base64')
+    .replace(/=/g, '')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_');
+}
+
+/**
+ * Create JWT for Voximplant secure objects using service account credentials JSON from
+ * VOX_SERVICE_ACCOUNT_CREDENTIALS env (same format as credentials.json from control panel).
+ */
+function createVoxJwt(): string | null {
+  const raw = process.env.VOX_SERVICE_ACCOUNT_CREDENTIALS;
+  if (!raw) return null;
+  try {
+    const creds = JSON.parse(raw) as VoxServiceAccountCredentials;
+    const accountId = Number((creds as any).account_id);
+    const keyId = (creds as any).key_id;
+    const privateKey = (creds as any).private_key;
+    if (!accountId || !keyId || !privateKey) {
+      throw new Error('Missing account_id/key_id/private_key');
+    }
+    const header = { typ: 'JWT', alg: 'RS256', kid: keyId };
+    const now = Math.floor(Date.now() / 1000);
+    const payload = { iss: accountId, iat: now, exp: now + 3600 };
+    const encodedHeader = base64url(JSON.stringify(header));
+    const encodedPayload = base64url(JSON.stringify(payload));
+    const data = `${encodedHeader}.${encodedPayload}`;
+    const signer = createSign('RSA-SHA256');
+    signer.update(data);
+    signer.end();
+    const signature = signer.sign(privateKey);
+    const encodedSig = base64url(signature);
+    return `${data}.${encodedSig}`;
+  } catch (err) {
+    console.warn(
+      '[voxLogTranscript] Failed to create JWT for secure log fetch:',
+      err instanceof Error ? err.message : err
+    );
+    return null;
+  }
 }
 
 /**
