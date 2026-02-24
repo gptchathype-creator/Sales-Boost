@@ -386,17 +386,6 @@ VoxEngine.addEventListener(AppEvents.Started, function (e) {
             scheduleHangup(reason);
             return;
           }
-          if (item.role === "assistant" && item.content && Array.isArray(item.content)) {
-            for (var c = 0; c < item.content.length; c++) {
-              var part = item.content[c];
-              var transcript = (part && part.transcript != null) ? String(part.transcript) : "";
-              if (transcriptLooksLikeGoodbye(transcript)) {
-                Logger.write("voice_realtime_pure: goodbye detected in transcript, scheduling hangup");
-                scheduleHangup("goodbye_transcript");
-                return;
-              }
-            }
-          }
           if (item.role === "user" || item.role === "assistant") {
             var textParts = [];
             if (item.content && Array.isArray(item.content)) {
