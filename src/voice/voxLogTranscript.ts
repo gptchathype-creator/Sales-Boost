@@ -105,20 +105,21 @@ function parseTranscriptFromLogText(logText: string): TranscriptTurn[] {
   for (const line of lines) {
     if (!line.includes('ConversationItemDone') && !line.includes('ResponseOutputAudioTranscriptDone')) continue;
 
-    let obj: { customEvent?: string; payload?: { item?: { role?: string; content?: Array<{ type?: string; transcript?: string }> }; transcript?: string } } | null = null;
+    // Loosely typed JSON parsing: log format can vary, use `any` to avoid brittle TS types.
+    let obj: any = null;
     const jsonMatch = line.match(/\{[\s\S]*"customEvent"[\s\S]*\}/);
     if (jsonMatch) {
       try {
-        obj = JSON.parse(jsonMatch[0]) as typeof obj;
+        obj = JSON.parse(jsonMatch[0]);
       } catch {
         continue;
       }
     }
-    if (!obj?.payload && obj?.customEvent !== 'ResponseOutputAudioTranscriptDone') {
+    if ((!obj || !obj.payload) && obj && obj.customEvent !== 'ResponseOutputAudioTranscriptDone') {
       const alt = line.match(/\{[\s\S]*"payload"[\s\S]*\}/);
       if (alt) {
         try {
-          obj = JSON.parse(alt[0]) as typeof obj;
+          obj = JSON.parse(alt[0]);
         } catch {
           // ignore
         }
