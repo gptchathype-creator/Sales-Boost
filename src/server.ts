@@ -2,6 +2,7 @@ import express from 'express';
 import https from 'https';
 import http from 'http';
 import fs from 'fs';
+import os from 'os';
 import type { Telegraf } from 'telegraf';
 import { WebSocketServer } from 'ws';
 import { prisma } from './db';
@@ -13,6 +14,20 @@ import { handleVoiceStreamMessage } from './voice/voiceStream';
 import { addCall, getCallHistory, getTestNumbers } from './voice/callHistory';
 import { startVoiceCall } from './voice/startVoiceCall';
 import { finalizeVoiceCallSession } from './voice/voiceCallSession';
+import { getDefaultState } from './state/defaultState';
+import { buildDealershipFromCar } from './llm/virtualClient';
+import { loadCar } from './data/carLoader';
+import { getVirtualClientReply, type Strictness } from './llm/virtualClient';
+import { generateSpeechBuffer } from './voice/tts';
+import type { TtsVoice } from './state/userPreferences';
+import { transcribeVoice } from './voice/stt';
+import { classifyBehavior, type BehaviorSignal } from './logic/behaviorClassifier';
+import {
+  advanceTopic,
+  checkCriticalEvasions,
+  recordEvasion,
+  type TopicCode,
+} from './logic/topicStateMachine';
 
 // ---- In-memory cache for admin analytics (Team / Voice dashboard) ----
 type TeamSummaryCache = {
@@ -70,7 +85,283 @@ export function registerTelegramWebhook(bot: Telegraf): void {
     }
   });
 }
-app.use(express.json());
+app.use(express.json({ limit: '12mb' }));
+
+// ── In‑memory web training sessions (independent от Telegram) ──
+type WebTrainingProfile = 'normal' | 'thorough' | 'pressure';
+
+type WebTrainingSession = {
+  id: string;
+  strictness: Strictness;
+  profile: WebTrainingProfile;
+  state: any;
+  car: ReturnType<typeof loadCar>;
+  dialogHistory: { role: 'client' | 'manager'; content: string }[];
+  behaviorSignals: BehaviorSignal[];
+};
+
+type WebTrainingResult = {
+  verdict: 'pass' | 'fail';
+  totalScore: number;
+  qualityTag: string;
+  summary: string;
+  strengths: string[];
+  weaknesses: string[];
+  recommendations: string[];
+  reasonCode: string | null;
+};
+
+const webTrainingSessions = new Map<string, WebTrainingSession>();
+
+function createWebSessionId(): string {
+  return `web_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizeRu(text: string): string {
+  return text.toLowerCase().replace(/[ё]/g, 'е').replace(/\s+/g, ' ').trim();
+}
+
+const HARD_RUDE_PATTERNS = [
+  'пошел на',
+  'пошел ты',
+  'пошла ты',
+  'да пошел ты',
+  'иди на',
+  'заткнись',
+  'отвали',
+  'мне насрать',
+  'мне плевать',
+  'сами разбирайтесь',
+  'закрой рот',
+  'не твое дело',
+  'достал',
+  'задолбал',
+];
+
+function isHardRude(text: string): boolean {
+  const n = normalizeRu(text);
+  return HARD_RUDE_PATTERNS.some((p) => n.includes(p));
+}
+
+function shouldForceConversationEnd(clientMessage: string): boolean {
+  const n = normalizeRu(clientMessage);
+  return (
+    n.includes('не готов продолжать разговор') ||
+    n.includes('на этом, пожалуй, закончим') ||
+    n.includes('видимо, сейчас не лучшее время') ||
+    n.includes('пожалуй, обращусь в другой салон') ||
+    n.includes('всего доброго') ||
+    n.includes('до свидания')
+  );
+}
+
+async function runWebTrainingTurn(params: {
+  sessionId: string;
+  message: string;
+  replyMode: 'text' | 'text+voice';
+  ttsVoice: TtsVoice;
+}): Promise<{ clientMessage: string; endConversation: boolean; audioBase64: string | null; result: WebTrainingResult | null }> {
+  const { sessionId, message, replyMode, ttsVoice } = params;
+  const sess = webTrainingSessions.get(sessionId);
+  if (!sess) {
+    throw new Error('SESSION_NOT_FOUND');
+  }
+
+  const { car, strictness } = sess;
+  const state = { ...sess.state };
+  const historyBefore = [...sess.dialogHistory];
+  const history = [...historyBefore, { role: 'manager' as const, content: message }];
+  const max_client_turns = (state.strictnessState?.max_client_turns as number) ?? 12;
+  const behavior = classifyBehavior(message, {
+    lastClientQuestion: [...historyBefore].reverse().find((m) => m.role === 'client')?.content,
+    isClientWaitingAnswer: true,
+  });
+  const hardRude = isHardRude(message);
+  const behaviorSignals = [...sess.behaviorSignals, behavior];
+
+  if (behavior.toxic || hardRude || behavior.disengaging) {
+    const toxicReply =
+      behavior.disengaging
+        ? 'Понимаю. Не буду больше отвлекать. Спасибо за время, всего доброго.'
+        : behavior.severity === 'HIGH' || hardRude
+        ? 'Извините, но я не готов продолжать разговор в таком тоне. Всего доброго.'
+        : 'Мне бы хотелось более уважительного общения. На этом, пожалуй, закончим.';
+    const newHistory = [...history, { role: 'client' as const, content: toxicReply }];
+    const result = buildWebTrainingResult(
+      state,
+      newHistory,
+      behaviorSignals,
+      true,
+      behavior.disengaging ? 'DISENGAGEMENT' : 'BAD_TONE',
+    );
+    webTrainingSessions.delete(sessionId);
+    return { clientMessage: toxicReply, endConversation: true, audioBase64: null, result };
+  }
+
+  if (behavior.low_effort) state.low_effort_streak = (state.low_effort_streak ?? 0) + 1;
+  else state.low_effort_streak = 0;
+
+  const lowQualityStreak = behaviorSignals.reduce((acc, s) => (s.low_quality ? acc + 1 : 0), 0);
+  if ((state.low_effort_streak ?? 0) >= 3 || lowQualityStreak >= 2) {
+    const failReply =
+      'Я задаю конкретные вопросы и хотел бы получать развёрнутые ответы. Видимо, сейчас не лучшее время. До свидания.';
+    const newHistory = [...history, { role: 'client' as const, content: failReply }];
+    const result = buildWebTrainingResult(
+      state,
+      newHistory,
+      behaviorSignals,
+      true,
+      lowQualityStreak >= 2 ? 'REPEATED_LOW_QUALITY' : 'REPEATED_LOW_EFFORT',
+    );
+    webTrainingSessions.delete(sessionId);
+    return { clientMessage: failReply, endConversation: true, audioBase64: null, result };
+  }
+
+  const out = await getVirtualClientReply({
+    car,
+    dealership: buildDealershipFromCar(car),
+    state,
+    manager_last_message: message,
+    dialog_history: history,
+    strictness,
+    max_client_turns,
+    behaviorSignal: behavior,
+    maxResponseTokens: 220,
+  });
+
+  state.phase = out.diagnostics.current_phase;
+  let topicMap = { ...state.topics };
+  for (const code of out.diagnostics.topics_addressed as TopicCode[]) {
+    if (!topicMap[code]) continue;
+    const currentStatus = topicMap[code].status;
+    const next = currentStatus === 'none' ? 'asked' : currentStatus === 'asked' ? 'answered' : currentStatus;
+    const result = advanceTopic(topicMap, code, next as any);
+    if (result.valid) topicMap = result.map;
+  }
+  for (const code of out.diagnostics.topics_evaded as TopicCode[]) {
+    if (!topicMap[code]) continue;
+    topicMap = recordEvasion(topicMap, code);
+  }
+  state.topics = topicMap;
+
+  const nextState = {
+    ...state,
+    stage: out.update_state.stage,
+    checklist: { ...state.checklist, ...out.update_state.checklist },
+    notes: out.update_state.notes,
+    client_turns: out.update_state.client_turns,
+  };
+
+  const newHistory = [...history, { role: 'client' as const, content: out.client_message }];
+  const evasionCheck = checkCriticalEvasions(topicMap);
+  if (evasionCheck.shouldFail) {
+    const evasionReply =
+      'Я дважды задал важный вопрос и не получил ответа. Пожалуй, обращусь в другой салон.';
+    const failHistory = [...history, { role: 'client' as const, content: evasionReply }];
+    const result = buildWebTrainingResult(nextState, failHistory, behaviorSignals, true, `CRITICAL_EVASION:${evasionCheck.failedTopic}`);
+    webTrainingSessions.delete(sessionId);
+    return { clientMessage: evasionReply, endConversation: true, audioBase64: null, result };
+  }
+
+  const endConversation = Boolean(out.end_conversation) || shouldForceConversationEnd(out.client_message);
+  const result = endConversation
+    ? buildWebTrainingResult(nextState, newHistory, behaviorSignals, false, null)
+    : null;
+  if (endConversation) {
+    webTrainingSessions.delete(sessionId);
+  } else {
+    webTrainingSessions.set(sessionId, {
+      ...sess,
+      state: nextState,
+      dialogHistory: newHistory,
+      behaviorSignals,
+    });
+  }
+
+  let audioBase64: string | null = null;
+  if (replyMode === 'text+voice' && out.client_message.trim()) {
+    try {
+      const buf = await generateSpeechBuffer(out.client_message, ttsVoice);
+      if (buf.length) audioBase64 = buf.toString('base64');
+    } catch (e) {
+      console.error('[web-training] TTS turn error:', e);
+    }
+  }
+
+  return {
+    clientMessage: out.client_message,
+    endConversation,
+    audioBase64,
+    result,
+  };
+}
+
+function buildWebTrainingResult(
+  state: any,
+  history: { role: 'client' | 'manager'; content: string }[],
+  behaviorSignals: BehaviorSignal[],
+  forcedFail: boolean,
+  reasonCode: string | null,
+): WebTrainingResult {
+  const toxicCount = behaviorSignals.filter((s) => s.toxic).length;
+  const lowEffortCount = behaviorSignals.filter((s) => s.low_effort).length;
+  const evasionCount = behaviorSignals.filter((s) => s.evasion).length;
+  const highSeverityCount = behaviorSignals.filter((s) => s.severity === 'HIGH').length;
+  const prohibitedUnique = new Set(behaviorSignals.flatMap((s) => s.prohibited_phrase_hits)).size;
+  const turns = history.filter((m) => m.role === 'manager').length;
+  const criticalEvasion = behaviorSignals.some((s) => s.evasion) && String(reasonCode || '').startsWith('CRITICAL_EVASION');
+
+  let score = 82;
+  score -= toxicCount * 28;
+  score -= lowEffortCount * 12;
+  score -= evasionCount * 10;
+  score -= highSeverityCount * 10;
+  score -= prohibitedUnique * 6;
+  if (turns >= 4) score += 5;
+  if (turns >= 7) score += 3;
+  if (forcedFail) score = Math.min(score, toxicCount > 0 ? 18 : criticalEvasion ? 28 : 35);
+  score = Math.max(0, Math.min(100, Math.round(score)));
+
+  const verdict: 'pass' | 'fail' = forcedFail || score < 60 ? 'fail' : 'pass';
+  const qualityTag =
+    score >= 80 ? 'Хорошо' : score >= 60 ? 'Средне' : 'Нужно улучшить';
+
+  const strengths: string[] = [];
+  if (toxicCount === 0) strengths.push('Корректный тон общения');
+  if (lowEffortCount <= 1) strengths.push('Ответы в основном содержательные');
+  if (evasionCount === 0) strengths.push('Не уходили от ключевых вопросов клиента');
+  if (!strengths.length) strengths.push('Диалог состоялся, можно улучшать качество обработки возражений');
+
+  const weaknesses: string[] = [];
+  if (lowEffortCount > 0) weaknesses.push(`Короткие/слабые ответы: ${lowEffortCount}`);
+  if (evasionCount > 0) weaknesses.push(`Уход от вопросов клиента: ${evasionCount}`);
+  if (prohibitedUnique > 0) weaknesses.push('Использовались нежелательные формулировки');
+  if (toxicCount > 0) weaknesses.push('Нарушен тон коммуникации');
+  if (!weaknesses.length) weaknesses.push('Существенных провалов в коммуникации не обнаружено');
+
+  const recommendations: string[] = [];
+  if (lowEffortCount > 0) recommendations.push('Давать развёрнутый ответ на каждый вопрос клиента');
+  if (evasionCount > 0) recommendations.push('Не уходить от прямых вопросов, сначала закрывать их');
+  if (prohibitedUnique > 0) recommendations.push('Убрать фразы вроде "посмотрите на сайте"/"я не знаю"');
+  if (toxicCount > 0) recommendations.push('Сохранять вежливый и уважительный тон в любых ситуациях');
+  if (!recommendations.length) recommendations.push('Поддерживать текущий уровень и фокусироваться на закрытии на следующий шаг');
+
+  const summary =
+    verdict === 'pass'
+      ? 'Тестирование завершено успешно. Менеджер удержал диалог и дал приемлемые ответы.'
+      : 'Тестирование завершено с отрицательным результатом. Качество ответов и ведения диалога требует улучшения.';
+
+  return {
+    verdict,
+    totalScore: score,
+    qualityTag,
+    summary,
+    strengths,
+    weaknesses,
+    recommendations,
+    reasonCode,
+  };
+}
 
 // Resolve absolute path to public/index.html (works for tsx and compiled)
 function getIndexPath(): string | null {
@@ -136,6 +427,202 @@ app.post('/voice/dialog', (req, res) => {
     console.error('[voice/dialog] Unhandled:', err);
     res.status(500).json({ error: 'Internal error', reply_text: 'Здравствуйте, произошла ошибка. Попробуйте позже.', end_session: false });
   });
+});
+
+// ── Web training API: start session ──
+app.post('/api/training/web/start', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const strictness = (body.strictness ?? 'medium') as Strictness;
+    const profile = (body.profile ?? 'normal') as WebTrainingProfile;
+    const replyMode = (body.replyMode ?? 'text') as 'text' | 'text+voice';
+    const ttsVoice = (body.voice ?? 'male') as TtsVoice;
+
+    const car = loadCar();
+    const baseState = getDefaultState(profile);
+    const max_client_turns =
+      strictness === 'low' ? 8 : strictness === 'high' ? 14 : baseState.strictnessState.max_client_turns;
+
+    const state = {
+      ...baseState,
+      strictnessState: { strictness, max_client_turns },
+    };
+
+    const sessionId = createWebSessionId();
+    const dealership = buildDealershipFromCar(car);
+
+    const out = await getVirtualClientReply({
+      car,
+      dealership,
+      state,
+      manager_last_message: '',
+      dialog_history: [],
+      strictness,
+      max_client_turns,
+    });
+
+    const nextState = {
+      ...state,
+      stage: out.update_state.stage,
+      checklist: { ...state.checklist, ...out.update_state.checklist },
+      notes: out.update_state.notes,
+      client_turns: out.update_state.client_turns,
+    };
+
+    webTrainingSessions.set(sessionId, {
+      id: sessionId,
+      strictness,
+      profile,
+      state: nextState,
+      car,
+      dialogHistory: [{ role: 'client', content: out.client_message }],
+      behaviorSignals: [],
+    });
+
+    let audioBase64: string | null = null;
+    if (replyMode === 'text+voice' && out.client_message.trim()) {
+      try {
+        const buf = await generateSpeechBuffer(out.client_message, ttsVoice);
+        if (buf.length) {
+          audioBase64 = buf.toString('base64');
+        }
+      } catch (e) {
+        console.error('[web-training] TTS start error:', e);
+      }
+    }
+
+    res.json({
+      sessionId,
+      clientMessage: out.client_message,
+      endConversation: out.end_conversation ?? false,
+      audioBase64,
+    });
+  } catch (error) {
+    console.error('[web-training] start error:', error);
+    const msg = error instanceof Error ? error.message : String(error);
+
+    // Максимально безопасный fallback: просто текст без внешних вызовов
+    res.json({
+      sessionId: null,
+      clientMessage:
+        'Сейчас тренажёр недоступен локально (ошибка подключения к AI‑клиенту). ' +
+        'Интерфейс работает, но диалог с клиентом мы сможем полностью включить уже на проде.',
+      endConversation: true,
+      audioBase64: null,
+      warning:
+        'Локальный режим без OpenAI: запрос к виртуальному клиенту не выполнен. ' +
+        'Подключим полноценного клиента на продакшене.',
+      error: msg,
+    });
+  }
+});
+
+// ── Web training API: manager message ──
+app.post('/api/training/web/message', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const { sessionId, message } = body as { sessionId?: string; message?: string };
+    const replyMode = (body.replyMode ?? 'text') as 'text' | 'text+voice';
+    const ttsVoice = (body.voice ?? 'male') as TtsVoice;
+
+    if (!sessionId || typeof sessionId !== 'string') {
+      return res.status(400).json({ error: 'sessionId обязателен' });
+    }
+    if (!message || typeof message !== 'string' || !message.trim()) {
+      return res.status(400).json({ error: 'Пустое сообщение' });
+    }
+
+    if (!webTrainingSessions.has(sessionId)) {
+      return res.status(404).json({ error: 'Сессия не найдена или истекла' });
+    }
+
+    const out = await runWebTrainingTurn({
+      sessionId,
+      message,
+      replyMode,
+      ttsVoice,
+    });
+
+    res.json(out);
+  } catch (error) {
+    console.error('[web-training] message error:', error);
+    const msg = error instanceof Error ? error.message : String(error);
+
+    res.json({
+      clientMessage:
+        'Диалог сейчас недоступен из‑за ошибки подключения к AI‑клиенту. ' +
+        'Но интерфейс теста уже готов — в продакшене он будет работать как в Telegram.',
+      endConversation: true,
+      audioBase64: null,
+      warning:
+        'Локальный режим без OpenAI: сообщения не обрабатываются. ' +
+        'Полноценный диалог включим на боевом сервере.',
+      error: msg,
+    });
+  }
+});
+
+// ── Web training API: manager voice message ──
+app.post('/api/training/web/voice-message', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const { sessionId, audioBase64, mimeType } = body as {
+      sessionId?: string;
+      audioBase64?: string;
+      mimeType?: string;
+    };
+    const replyMode = (body.replyMode ?? 'text+voice') as 'text' | 'text+voice';
+    const ttsVoice = (body.voice ?? 'male') as TtsVoice;
+
+    if (!sessionId || typeof sessionId !== 'string') {
+      return res.status(400).json({ error: 'sessionId обязателен' });
+    }
+    if (!audioBase64 || typeof audioBase64 !== 'string') {
+      return res.status(400).json({ error: 'audioBase64 обязателен' });
+    }
+    if (!webTrainingSessions.has(sessionId)) {
+      return res.status(404).json({ error: 'Сессия не найдена или истекла' });
+    }
+
+    const ext = mimeType?.includes('ogg') ? 'ogg' : mimeType?.includes('mp4') ? 'm4a' : 'webm';
+    const tmpPath = path.join(os.tmpdir(), `web-voice-${Date.now()}.${ext}`);
+    const buf = Buffer.from(audioBase64, 'base64');
+    await fs.promises.writeFile(tmpPath, buf);
+
+    let managerText = '';
+    try {
+      managerText = await transcribeVoice(tmpPath);
+    } finally {
+      fs.promises.unlink(tmpPath).catch(() => {});
+    }
+
+    if (!managerText.trim()) {
+      return res.status(400).json({ error: 'Не удалось распознать голосовое сообщение' });
+    }
+
+    const out = await runWebTrainingTurn({
+      sessionId,
+      message: managerText,
+      replyMode,
+      ttsVoice,
+    });
+
+    res.json({ ...out, managerTranscript: managerText });
+  } catch (error) {
+    console.error('[web-training] voice-message error:', error);
+    const msg = error instanceof Error ? error.message : String(error);
+    res.json({
+      clientMessage:
+        'Сейчас не удалось обработать голос на локальном стенде, но интерфейс работает. ' +
+        'В продакшене ответ будет как в Telegram.',
+      endConversation: true,
+      audioBase64: null,
+      warning:
+        'Локальный fallback: проверьте доступ к OpenAI/STT (VPN/прокси). ' +
+        'Диалог завершён, чтобы избежать повторных ошибок.',
+      error: msg || 'Ошибка обработки голосового сообщения',
+    });
+  }
 });
 
 // Explicit root: always serve Mini App
@@ -519,10 +1006,14 @@ function getFailureReasonLabel(reason?: string | null): string {
     IGNORED_QUESTIONS: 'Игнорирование вопросов клиента',
     POOR_COMMUNICATION: 'Низкое качество коммуникации',
     REPEATED_LOW_EFFORT: 'Повторные некачественные ответы',
+    REPEATED_LOW_QUALITY: 'Повторные некачественные/формальные ответы',
+    DISENGAGEMENT: 'Менеджер завершил коммуникацию / отказался от диалога',
     rude_language: 'Недопустимая лексика',
     ignored_questions: 'Игнорирование вопросов клиента',
     poor_communication: 'Низкое качество коммуникации',
     repeated_low_effort: 'Повторные некачественные ответы',
+    repeated_low_quality: 'Повторные некачественные/формальные ответы',
+    disengagement: 'Менеджер завершил коммуникацию / отказался от диалога',
   };
   if (map[base]) return map[base];
   if (base === 'CRITICAL_EVASION' || base === 'critical_evasion') {
@@ -645,6 +1136,8 @@ app.get('/api/admin/attempts', async (req, res) => {
         IGNORED_QUESTIONS: 'Досрочно завершена: менеджер игнорировал вопросы.',
         POOR_COMMUNICATION: 'Досрочно завершена: низкое качество коммуникации.',
         REPEATED_LOW_EFFORT: 'Досрочно завершена: повторные некачественные ответы.',
+        REPEATED_LOW_QUALITY: 'Досрочно завершена: формальные/некачественные ответы.',
+        DISENGAGEMENT: 'Досрочно завершена: менеджер отказался продолжать диалог.',
       };
       const baseReason = (s.failureReason ?? '').split(':')[0];
 

@@ -8,6 +8,8 @@ export type BehaviorSeverity = 'LOW' | 'MEDIUM' | 'HIGH';
 export interface BehaviorSignal {
   toxic: boolean;
   low_effort: boolean;
+  disengaging: boolean;
+  low_quality: boolean;
   evasion: boolean;
   prohibited_phrase_hits: string[];
   severity: BehaviorSeverity;
@@ -87,6 +89,34 @@ const LOW_EFFORT_ONLY_TOKENS = [
   'ок', 'ладно', 'ясно', 'угу', 'ага', 'да', 'нет', 'ну',
 ];
 
+const DISENGAGING_PATTERNS = [
+  'не звоните',
+  'больше не звоните',
+  'не надо мне звонить',
+  'не хочу разговаривать',
+  'не хочу говорить',
+  'не хочу общаться',
+  'мне не интересно',
+  'мне это не интересно',
+  'мне не нужно',
+  'не надо',
+  'отстаньте',
+  'давайте закончим',
+  'закончим разговор',
+  'всего доброго',
+  'до свидания',
+  'пока',
+  'не хочу больше',
+  "don't call",
+  'do not call',
+  'stop calling',
+  "i don't want to talk",
+  'not interested',
+  'leave me alone',
+  'goodbye',
+  'bye',
+];
+
 // ── Helpers ──
 
 function normalize(text: string): string {
@@ -99,6 +129,14 @@ function containsAny(text: string, patterns: string[]): string[] {
     if (text.includes(p)) hits.push(p);
   }
   return hits;
+}
+
+function isLikelyDisengaging(text: string): boolean {
+  const direct = containsAny(text, DISENGAGING_PATTERNS);
+  if (direct.length > 0) return true;
+  const stopAndTalkRegex =
+    /(не\s*(хочу|буду).*(разговар|говор|общат))|((stop|dont|don't)\s+(call|talk|message))/i;
+  return stopAndTalkRegex.test(text);
 }
 
 // ── Main classifier ──
@@ -121,10 +159,12 @@ export function classifyBehavior(
   const profanityHits = containsAny(norm, PROFANITY_STEMS);
   const hostileHits = containsAny(norm, HOSTILE_PATTERNS);
   const dismissiveHits = containsAny(norm, DISMISSIVE_PATTERNS);
+  const disengaging = isLikelyDisengaging(norm);
 
   const toxic = profanityHits.length > 0 || hostileHits.length > 0;
   if (profanityHits.length > 0) reasons.push('profanity detected');
   if (hostileHits.length > 0) reasons.push('hostile language');
+  if (disengaging) reasons.push('conversation shutdown / refusal intent');
 
   // ── Prohibited phrase detection ──
   const prohibitedHits = [
@@ -147,6 +187,7 @@ export function classifyBehavior(
   if (context.isClientWaitingAnswer) {
     const answersNothing =
       isLowEffort ||
+      disengaging ||
       dismissiveHits.length > 0 ||
       containsAny(norm, ['не знаю', 'без понятия', 'не в курсе', 'не могу сказать']).length > 0;
     if (answersNothing) {
@@ -155,9 +196,12 @@ export function classifyBehavior(
     }
   }
 
+  const lowQuality = disengaging || dismissiveHits.length > 0 || (isLowEffort && evasion);
+  if (lowQuality && !disengaging) reasons.push('low-quality / disengaged answer');
+
   // ── Severity ──
   let severity: BehaviorSeverity = 'LOW';
-  if (toxic) {
+  if (toxic || disengaging) {
     severity = 'HIGH';
   } else if (dismissiveHits.length > 0 || (isLowEffort && evasion)) {
     severity = 'MEDIUM';
@@ -168,6 +212,8 @@ export function classifyBehavior(
   return {
     toxic,
     low_effort: isLowEffort,
+    disengaging,
+    low_quality: lowQuality,
     evasion,
     prohibited_phrase_hits: prohibitedHits,
     severity,

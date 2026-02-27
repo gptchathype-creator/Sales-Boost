@@ -91,7 +91,7 @@ async function generateSpeechElevenLabs(text: string): Promise<Buffer> {
 }
 
 /** OpenAI opus = OGG/Opus, suitable for Telegram sendVoice (voice message). */
-async function generateSpeechOpenAI(text: string, voice: TtsVoice = 'male'): Promise<Buffer> {
+export async function generateSpeechOpenAI(text: string, voice: TtsVoice = 'male'): Promise<Buffer> {
   const response = await openai.audio.speech.create({
     model: 'tts-1',
     voice: OPENAI_VOICE_MAP[voice] as any,
@@ -102,6 +102,9 @@ async function generateSpeechOpenAI(text: string, voice: TtsVoice = 'male'): Pro
   const arrayBuffer = await blob.arrayBuffer();
   return Buffer.from(arrayBuffer);
 }
+
+// Backward‑compatible alias for non‑Telegram callers (e.g. web тренажёр)
+export const generateSpeechBuffer = generateSpeechOpenAI;
 
 export interface SendVoiceOptions {
   voice?: TtsVoice;
