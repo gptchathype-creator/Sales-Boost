@@ -1,17 +1,14 @@
 @import "tailwindcss";
 @config "../tailwind.config.cjs";
 @import "@heroui/styles";
+@import "./theme.css";
 
-html.dark {
-  color-scheme: dark;
-}
-
+/* Global – clean minimal SaaS dashboard */
 body {
   margin: 0;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
-    sans-serif;
-  background-color: #020617;
-  color: #e5e7eb;
+  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background-color: var(--bg-app);
+  color: var(--text-primary);
 }
 
 

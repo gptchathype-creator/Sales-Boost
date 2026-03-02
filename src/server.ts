@@ -625,11 +625,21 @@ app.post('/api/training/web/voice-message', async (req, res) => {
   }
 });
 
+// Prevent caching of index.html so users always get latest app after deploy/refresh
+function sendIndexHtml(res: express.Response) {
+  res.set({
+    'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+    Pragma: 'no-cache',
+    Expires: '0',
+  });
+  return res.sendFile(INDEX_HTML_PATH!);
+}
+
 // Explicit root: always serve Mini App
 app.get('/', (req, res) => {
   if (INDEX_HTML_PATH) {
     try {
-      return res.sendFile(INDEX_HTML_PATH);
+      return sendIndexHtml(res);
     } catch (err) {
       console.error('Error sending index.html:', err);
       sendErrorHtml(res, 500, 'Ошибка загрузки', 'Не удалось отдать страницу приложения. См. логи сервера.');
@@ -1702,7 +1712,7 @@ app.post('/api/admin/start-voice-call', async (req, res) => {
         error: 'Укажите номер (to) или задайте VOX_TEST_TO / VOX_TEST_NUMBERS в .env.',
       });
     }
-    const scenario = (body.scenario === 'realtime' || body.scenario === 'realtime_pure' || body.scenario === 'dialog') ? body.scenario : undefined;
+    const scenario = (body.scenario === 'realtime' || body.scenario === 'realtime_pure' || body.scenario === 'dialog') ? body.scenario : 'realtime_pure';
     const result = await startVoiceCall(to, { scenario });
     if ('error' in result) {
       return res.status(400).json({ error: result.error });
@@ -1863,12 +1873,273 @@ app.get('/api/admin/call-history/:id', async (req, res) => {
   }
 });
 
+// ─── Super Admin: platform-level data (no schema change) ─────────────────
+
+// Merged audits: attempts + training sessions + voice calls (platform-wide list)
+app.get('/api/admin/super-admin/audits', async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit as string) || 100, 500);
+    const [attempts, trainingSessions, voiceSessions] = await Promise.all([
+      prisma.attempt.findMany({
+        where: { status: 'completed', totalScore: { not: null } },
+        include: { user: true },
+        orderBy: { id: 'desc' },
+        take: limit,
+      }),
+      prisma.trainingSession.findMany({
+        where: {
+          status: { in: ['completed', 'failed'] },
+          OR: [
+            { assessmentScore: { not: null } },
+            { failureReason: { not: null } },
+          ],
+        },
+        include: { user: true },
+        orderBy: { id: 'desc' },
+        take: limit,
+      }),
+      prisma.voiceCallSession.findMany({
+        orderBy: { id: 'desc' },
+        take: limit,
+      }),
+    ]);
+
+    const auditFromAttempt = (a: { id: number; user: { fullName: string } | null; totalScore: number | null; finishedAt: Date | null }) => {
+      const score = a.totalScore ?? 0;
+      return {
+        id: `attempt-${a.id}`,
+        type: 'attempt' as const,
+        company: 'Platform',
+        dealer: '—',
+        date: a.finishedAt?.toISOString() ?? new Date().toISOString(),
+        aiScore: Math.round(score * 10) / 10,
+        status: score >= 76 ? 'Good' as const : score >= 50 ? 'Medium' as const : 'Bad' as const,
+        userName: a.user?.fullName ?? '—',
+        detailId: a.id,
+        detailType: 'attempt' as const,
+      };
+    };
+    const auditFromTraining = (s: { id: number; user: { fullName: string } | null; totalScore: number | null; evaluationJson: string | null; assessmentScore: number | null; completedAt: Date | null }) => {
+      let score = s.totalScore ?? 0;
+      if (score === 0 && s.evaluationJson) {
+        try {
+          const e = JSON.parse(s.evaluationJson);
+          score = e.overall_score_0_100 ?? s.assessmentScore ?? 0;
+        } catch { /* skip */ }
+      }
+      if (score === 0 && s.assessmentScore != null) score = s.assessmentScore;
+      return {
+        id: `training-${s.id}`,
+        type: 'training' as const,
+        company: 'Platform',
+        dealer: '—',
+        date: s.completedAt?.toISOString() ?? new Date().toISOString(),
+        aiScore: Math.round(score * 10) / 10,
+        status: score >= 76 ? 'Good' as const : score >= 50 ? 'Medium' as const : 'Bad' as const,
+        userName: s.user?.fullName ?? '—',
+        detailId: s.id,
+        detailType: 'training' as const,
+      };
+    };
+    const auditFromCall = (s: { id: number; to: string; startedAt: Date; totalScore: number | null; evaluationJson: string | null }) => {
+      let score = s.totalScore ?? 0;
+      if (score === 0 && s.evaluationJson) {
+        try {
+          const e = JSON.parse(s.evaluationJson);
+          score = e.overall_score_0_100 ?? 0;
+        } catch { /* skip */ }
+      }
+      return {
+        id: `call-${s.id}`,
+        type: 'call' as const,
+        company: 'Platform',
+        dealer: s.to,
+        date: s.startedAt.toISOString(),
+        aiScore: Math.round(score * 10) / 10,
+        status: score >= 76 ? 'Good' as const : score >= 50 ? 'Medium' as const : 'Bad' as const,
+        userName: null,
+        detailId: s.id,
+        detailType: 'call' as const,
+      };
+    };
+
+    const items = [
+      ...attempts.map(auditFromAttempt),
+      ...trainingSessions.map(auditFromTraining),
+      ...voiceSessions.map(auditFromCall),
+    ]
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      .slice(0, limit);
+
+    res.json({ audits: items });
+  } catch (err) {
+    console.error('super-admin/audits error:', err);
+    res.json({ audits: [] });
+  }
+});
+
+// Time-series: last 7 days avg AI score (for dashboard chart)
+app.get('/api/admin/super-admin/time-series', async (_req, res) => {
+  try {
+    const days = 7;
+    const end = new Date();
+    const start = new Date(end);
+    start.setDate(start.getDate() - days);
+    start.setHours(0, 0, 0, 0);
+
+    const [attempts, trainingSessions, voiceSessions] = await Promise.all([
+      prisma.attempt.findMany({
+        where: {
+          status: 'completed',
+          totalScore: { not: null },
+          finishedAt: { gte: start },
+        },
+        select: { finishedAt: true, totalScore: true },
+      }),
+      prisma.trainingSession.findMany({
+        where: {
+          status: { in: ['completed', 'failed'] },
+          completedAt: { gte: start },
+          OR: [
+            { assessmentScore: { not: null } },
+            { evaluationJson: { not: null } },
+          ],
+        },
+        select: { completedAt: true, totalScore: true, evaluationJson: true, assessmentScore: true },
+      }),
+      prisma.voiceCallSession.findMany({
+        where: {
+          startedAt: { gte: start },
+          OR: [
+            { totalScore: { not: null } },
+            { evaluationJson: { not: null } },
+          ],
+        },
+        select: { startedAt: true, totalScore: true, evaluationJson: true },
+      }),
+    ]);
+
+    const byDay: Record<string, { sum: number; count: number }> = {};
+    for (let i = 0; i < days; i++) {
+      const d = new Date(start);
+      d.setDate(d.getDate() + i);
+      const key = d.toISOString().slice(0, 10);
+      byDay[key] = { sum: 0, count: 0 };
+    }
+
+    const addScore = (date: Date | null, score: number) => {
+      if (!date) return;
+      const key = new Date(date).toISOString().slice(0, 10);
+      if (byDay[key]) {
+        byDay[key].sum += score;
+        byDay[key].count += 1;
+      }
+    };
+
+    attempts.forEach((a) => addScore(a.finishedAt, a.totalScore!));
+    trainingSessions.forEach((s) => {
+      let score = s.totalScore ?? s.assessmentScore ?? 0;
+      if (score === 0 && s.evaluationJson) {
+        try {
+          const e = JSON.parse(s.evaluationJson);
+          score = e.overall_score_0_100 ?? 0;
+        } catch { /* skip */ }
+        addScore(s.completedAt, score);
+      } else if (score > 0) {
+        addScore(s.completedAt, score);
+      }
+    });
+    voiceSessions.forEach((s) => {
+      let score = s.totalScore ?? 0;
+      if (score === 0 && s.evaluationJson) {
+        try {
+          const e = JSON.parse(s.evaluationJson);
+          score = e.overall_score_0_100 ?? 0;
+        } catch { /* skip */ }
+        addScore(s.startedAt, score);
+      } else if (score > 0) {
+        addScore(s.startedAt, score);
+      }
+    });
+
+    const series = Object.entries(byDay)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, { sum, count }]) => ({
+        date,
+        avgScore: count > 0 ? Math.round((sum / count) * 10) / 10 : 0,
+        count,
+      }));
+
+    res.json({ series });
+  } catch (err) {
+    console.error('super-admin/time-series error:', err);
+    res.json({ series: [] });
+  }
+});
+
+// Mock companies & dealers for local/test (no DB entities for company/dealer)
+app.get('/api/admin/super-admin/mock-entities', async (req, res) => {
+  try {
+    const isLocalhost = /localhost|127\.0\.0\.1/.test(req.get('host') || req.get('origin') || '');
+    const useMock = !!(isLocalhost || config.allowDevAdmin || process.env.NODE_ENV !== 'production' || req.query.mock === '1');
+    const companies = useMock
+      ? [
+          { id: 'corp-1', name: 'АвтоХолдинг Север', autodealers: 4, avgAiScore: 82.4, answerRate: 78, lastAudit: new Date(Date.now() - 86400000).toISOString().slice(0, 10), trend: 1 },
+          { id: 'corp-2', name: 'Drive Group', autodealers: 3, avgAiScore: 75.1, answerRate: 71, lastAudit: new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10), trend: -1 },
+          { id: 'corp-3', name: 'МоторСервис', autodealers: 5, avgAiScore: 88.2, answerRate: 85, lastAudit: new Date().toISOString().slice(0, 10), trend: 1 },
+          { id: 'corp-4', name: 'Авто Плюс', autodealers: 2, avgAiScore: 69.3, answerRate: 62, lastAudit: new Date(Date.now() - 3 * 86400000).toISOString().slice(0, 10), trend: 0 },
+          { id: 'corp-5', name: 'КарДилер', autodealers: 6, avgAiScore: 79.5, answerRate: 74, lastAudit: new Date(Date.now() - 86400000).toISOString().slice(0, 10), trend: -1 },
+        ]
+      : [];
+    const dealers = useMock
+      ? [
+          { id: 'd1', name: 'Автосалон Север‑1', city: 'Москва', avgScore: 84.2, audits: 24, bestEmployee: 'Иван П.', worstMetric: '—' },
+          { id: 'd2', name: 'Автосалон Север‑2', city: 'Москва', avgScore: 79.3, audits: 18, bestEmployee: 'Мария К.', worstMetric: 'Answer time' },
+          { id: 'd3', name: 'Автосалон Север‑СПб', city: 'Санкт‑Петербург', avgScore: 87.6, audits: 31, bestEmployee: 'Алексей В.', worstMetric: '—' },
+          { id: 'd4', name: 'Drive Москва', city: 'Москва', avgScore: 52.1, audits: 12, bestEmployee: 'Ольга С.', worstMetric: 'Script adherence' },
+          { id: 'd5', name: 'МоторСервис Центр', city: 'Казань', avgScore: 91.2, audits: 40, bestEmployee: 'Дмитрий Л.', worstMetric: '—' },
+        ]
+      : [];
+    res.json({ companies, dealers });
+  } catch (err) {
+    console.error('super-admin/mock-entities error:', err);
+    res.json({ companies: [], dealers: [] });
+  }
+});
+
+// Settings (view-only): scripts count, phones count, language, telephony
+app.get('/api/admin/super-admin/settings', async (_req, res) => {
+  try {
+    const [testCount, phoneResult] = await Promise.all([
+      prisma.test.count(),
+      prisma.voiceCallSession.findMany({ select: { to: true } }).then((sessions) => {
+        const distinct = new Set(sessions.map((s) => s.to));
+        return distinct.size;
+      }),
+    ]);
+    res.json({
+      totalScripts: testCount,
+      totalPhones: phoneResult,
+      platformLanguage: 'RU / KZ',
+      telephonyProvider: 'Voximplant',
+    });
+  } catch (err) {
+    console.error('super-admin/settings error:', err);
+    res.json({
+      totalScripts: 0,
+      totalPhones: 0,
+      platformLanguage: 'RU / KZ',
+      telephonyProvider: '—',
+    });
+  }
+});
+
 // Fallback: for any non-API GET request, serve Mini App (so /index.html etc. work)
 app.get('*', (req, res, next) => {
   if (req.path.startsWith('/api/')) return next();
   if (INDEX_HTML_PATH) {
     try {
-      return res.sendFile(INDEX_HTML_PATH);
+      return sendIndexHtml(res);
     } catch (err) {
       console.error('Error sending index.html (fallback):', err);
     }

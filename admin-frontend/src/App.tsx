@@ -14,6 +14,8 @@ import {
   ModalHeader,
   ModalBody,
 } from '@heroui/react';
+import { AdminLayout, AdminSidebarNavItem, useAdminDrawer } from './AdminLayout';
+import { SuperAdminLayout } from './super-admin/SuperAdminLayout';
 
 type Attempt = {
   id: number | string;
@@ -148,7 +150,7 @@ type AdminRole = 'super' | 'company' | 'dealer' | 'staff';
 const API_BASE = '';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'employees' | 'calls' | 'team' | 'expenses'>('employees');
+  const [activeTab, setActiveTab] = useState<'companies' | 'employees' | 'calls' | 'team'>('companies');
   const [role, setRole] = useState<AdminRole>('dealer');
 
   // Employees state
@@ -176,15 +178,12 @@ export default function App() {
   const [callDetail, setCallDetail] = useState<CallDetail | null>(null);
   const [callDetailLoading, setCallDetailLoading] = useState(false);
   const [callDetailError, setCallDetailError] = useState<string | null>(null);
-  const [scenario, setScenario] = useState<'dialog' | 'realtime' | 'realtime_pure'>('dialog');
   const [phone, setPhone] = useState('');
   const [startCallLoading, setStartCallLoading] = useState(false);
   const [startCallStatus, setStartCallStatus] = useState<string | null>(null);
+  const [dealerCardView, setDealerCardView] = useState<'list' | 'call' | 'attempt'>('list');
+  const [selectedAttemptForPage, setSelectedAttemptForPage] = useState<Attempt | null>(null);
 
-  useEffect(() => {
-    // Force dark mode class on html root
-    document.documentElement.classList.add('dark');
-  }, []);
 
   useEffect(() => {
     if (activeTab === 'employees') {
@@ -193,10 +192,12 @@ export default function App() {
       loadCalls();
     } else if (activeTab === 'team') {
       loadTeamSummary();
-    } else if (activeTab === 'expenses') {
-      loadExpenses();
     }
   }, [activeTab]);
+
+  useEffect(() => {
+    if (role === 'super') loadTeamSummary();
+  }, [role]);
 
   async function loadAttempts() {
     setAttemptsLoading(true);
@@ -304,19 +305,13 @@ export default function App() {
       const res = await fetch(`${API_BASE}/api/admin/start-voice-call`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ to: phone.trim(), scenario }),
+        body: JSON.stringify({ to: phone.trim(), scenario: 'realtime_pure' }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setStartCallStatus(data.error || `Ошибка ${res.status}`);
       } else {
-        const scenarioLabel =
-          scenario === 'realtime'
-            ? ' (OpenAI Realtime, гибрид)'
-            : scenario === 'realtime_pure'
-            ? ' (OpenAI Realtime, чистый)'
-            : ' (наш LLM)';
-        setStartCallStatus(`Звонок инициирован. Номер: ${(data.to || phone) + scenarioLabel}`);
+        setStartCallStatus(`Звонок инициирован. Номер: ${data.to || phone}`);
         loadCalls();
       }
     } catch (e: any) {
@@ -345,109 +340,168 @@ export default function App() {
     }
   }
 
+  const pageTitle =
+    role === 'dealer'
+      ? (activeTab === 'companies' ? 'Компании' : activeTab === 'calls' ? 'Звонки' : activeTab === 'employees' ? 'Сотрудники' : 'Команда')
+      : role === 'super'
+        ? 'Суперадмин'
+        : role === 'company'
+          ? 'Холдинг'
+          : 'Сотрудник';
+
+  const sidebar = (
+    <AppSidebar
+      role={role}
+      setRole={setRole}
+      activeTab={activeTab}
+      setActiveTab={setActiveTab}
+    />
+  );
+
+  const content = (
+    <>
+      {role === 'dealer' && (
+        <>
+          {activeTab === 'companies' && <DealerCompaniesTab />}
+          {activeTab === 'calls' && (
+            <CallsTab
+              loading={callsLoading}
+              error={callsError}
+              calls={calls}
+              phone={phone}
+              onPhoneChange={setPhone}
+              startCallLoading={startCallLoading}
+              startCallStatus={startCallStatus}
+              onStartCall={handleStartCall}
+              selectedCallId={selectedCallId}
+              callDetail={callDetail}
+              callDetailLoading={callDetailLoading}
+              callDetailError={callDetailError}
+              onSelectCall={(id) => { loadCallDetail(id); setDealerCardView('call'); }}
+              callViewMode={dealerCardView}
+              onCallCardPageBack={() => setDealerCardView('list')}
+            />
+          )}
+          {activeTab === 'employees' && (
+            <EmployeesTab
+              loading={attemptsLoading}
+              error={attemptsError}
+              attempts={attempts}
+              attemptViewMode={dealerCardView}
+              selectedAttemptForPage={selectedAttemptForPage}
+              onAttemptCardPageBack={() => { setDealerCardView('list'); setSelectedAttemptForPage(null); }}
+              onOpenAttemptPage={(a) => { setSelectedAttemptForPage(a); setDealerCardView('attempt'); }}
+            />
+          )}
+          {activeTab === 'team' && (
+            <TeamTab loading={teamLoading} error={teamError} summary={teamSummary} voice={voiceDashboard} />
+          )}
+        </>
+      )}
+      {role === 'company' && (
+        <CompanyAdminView summary={teamSummary} voice={voiceDashboard} loadingSummary={teamLoading} />
+      )}
+      {role === 'staff' && (
+        <StaffView loading={attemptsLoading} error={attemptsError} attempts={attempts} />
+      )}
+    </>
+  );
+
+  if (role === 'super' || role === 'company') {
+    return (
+      <SuperAdminLayout
+        summary={teamSummary}
+        voice={voiceDashboard}
+        loadingSummary={teamLoading}
+        onSwitchToDealer={() => setRole('dealer')}
+      />
+    );
+  }
+
   return (
-    <div className="bg-background text-foreground min-h-screen px-4 py-4 flex justify-center">
-      <div className="w-full max-w-md">
-        <Card shadow="sm" className="mb-4 bg-default-50">
-          <CardBody>
-            <div className="flex justify-between items-start gap-3">
-              <div>
-                <h1 className="text-lg font-semibold mb-1">Админ‑панель</h1>
-                <p className="text-xs text-default-500">Sales Boost · Telegram Mini App</p>
-              </div>
-              <div className="min-w-[140px]">
-                <Select
-                  size="sm"
-                  aria-label="Роль (только для предпросмотра)"
-                  selectedKeys={[role]}
-                  onSelectionChange={(keys) => {
-                    const first = Array.from(keys)[0] as AdminRole | undefined;
-                    if (first) setRole(first);
-                  }}
-                >
-                  <SelectItem key="super">Суперадмин</SelectItem>
-                  <SelectItem key="company">Холдинг</SelectItem>
-                  <SelectItem key="dealer">Автосалон</SelectItem>
-                  <SelectItem key="staff">Сотрудник</SelectItem>
-                </Select>
-              </div>
-            </div>
-          </CardBody>
-        </Card>
-
-        {role === 'dealer' && (
-          <Tabs
-            selectedKey={activeTab}
-            onSelectionChange={(k) => setActiveTab(k as any)}
-            variant="underlined"
-            color="primary"
-            aria-label="Разделы админ‑панели"
-          >
-            <Tab key="employees" title="Сотрудники">
-              <EmployeesTab loading={attemptsLoading} error={attemptsError} attempts={attempts} />
-            </Tab>
-            <Tab key="calls" title="Звонки">
-              <CallsTab
-                loading={callsLoading}
-                error={callsError}
-                calls={calls}
-                scenario={scenario}
-                onScenarioChange={setScenario}
-                phone={phone}
-                onPhoneChange={setPhone}
-                startCallLoading={startCallLoading}
-                startCallStatus={startCallStatus}
-                onStartCall={handleStartCall}
-                selectedCallId={selectedCallId}
-                callDetail={callDetail}
-                callDetailLoading={callDetailLoading}
-                callDetailError={callDetailError}
-                onSelectCall={loadCallDetail}
-              />
-            </Tab>
-            <Tab key="team" title="Команда">
-              <TeamTab loading={teamLoading} error={teamError} summary={teamSummary} voice={voiceDashboard} />
-            </Tab>
-            <Tab key="expenses" title="Баланс">
-              <ExpensesTab loading={expensesLoading} error={expensesError} info={expenses} />
-            </Tab>
-          </Tabs>
-        )}
-
-        {role === 'super' && (
-          <SuperAdminView
-            summary={teamSummary}
-            voice={voiceDashboard}
-            expenses={expenses}
-            loadingSummary={teamLoading}
-            loadingExpenses={expensesLoading}
-          />
-        )}
-        {role === 'company' && (
-          <CompanyAdminView summary={teamSummary} voice={voiceDashboard} loadingSummary={teamLoading} />
-        )}
-        {role === 'staff' && (
-          <StaffView loading={attemptsLoading} error={attemptsError} attempts={attempts} />
-        )}
-      </div>
-    </div>
+    <AdminLayout pageTitle={pageTitle} sidebar={sidebar} content={content} />
   );
 }
 
-function EmployeesTab(props: { loading: boolean; error: string | null; attempts: Attempt[] }) {
-  const { loading, error, attempts } = props;
-  const [selected, setSelected] = useState<Attempt | null>(null);
+function AppSidebar(props: {
+  role: AdminRole;
+  setRole: (r: AdminRole) => void;
+  activeTab: 'companies' | 'employees' | 'calls' | 'team';
+  setActiveTab: (t: 'companies' | 'employees' | 'calls' | 'team') => void;
+}) {
+  const { role, setRole, activeTab, setActiveTab } = props;
+  const drawer = useAdminDrawer();
+  const onNav = (tab: 'companies' | 'employees' | 'calls' | 'team') => {
+    drawer?.closeDrawer();
+    setActiveTab(tab);
+  };
+  const iconBriefcase = (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 7H4a2 2 0 00-2 2v10a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2z" /><path d="M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16" /></svg>
+  );
+  const iconPhone = (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7A2 2 0 0122 16.92z" /></svg>
+  );
+  const iconUsers = (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" /></svg>
+  );
+  const iconChart = (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 20V10M12 20V4M6 20v-6" /></svg>
+  );
+  return (
+    <>
+      <div style={{ marginBottom: 16 }}>
+        <h2 style={{ margin: '0 0 4px', fontSize: 18, fontWeight: 600, color: 'var(--text-heading)' }}>Sales Boost</h2>
+        <p style={{ margin: 0, fontSize: 12, color: 'var(--text-muted)' }}>Админ‑панель</p>
+      </div>
+      <div style={{ marginBottom: 20 }}>
+        <Select
+          size="sm"
+          aria-label="Роль (только для предпросмотра)"
+          selectedKeys={[role]}
+          onSelectionChange={(keys) => {
+            const first = Array.from(keys)[0] as AdminRole | undefined;
+            if (first) setRole(first);
+          }}
+          classNames={{
+            trigger: 'admin-select-trigger',
+          }}
+        >
+          <SelectItem key="super">Суперадмин</SelectItem>
+          <SelectItem key="company">Холдинг</SelectItem>
+          <SelectItem key="dealer">Автосалон</SelectItem>
+          <SelectItem key="staff">Сотрудник</SelectItem>
+        </Select>
+      </div>
+      {role === 'dealer' && (
+        <nav style={{ display: 'flex', flexDirection: 'column' }}>
+          <AdminSidebarNavItem active={activeTab === 'companies'} onClick={() => onNav('companies')} icon={iconBriefcase}>Компании</AdminSidebarNavItem>
+          <AdminSidebarNavItem active={activeTab === 'calls'} onClick={() => onNav('calls')} icon={iconPhone}>Звонки</AdminSidebarNavItem>
+          <AdminSidebarNavItem active={activeTab === 'employees'} onClick={() => onNav('employees')} icon={iconUsers}>Сотрудники</AdminSidebarNavItem>
+          <AdminSidebarNavItem active={activeTab === 'team'} onClick={() => onNav('team')} icon={iconChart}>Команда</AdminSidebarNavItem>
+        </nav>
+      )}
+    </>
+  );
+}
+
+function EmployeesTab(props: {
+  loading: boolean;
+  error: string | null;
+  attempts: Attempt[];
+  attemptViewMode: 'list' | 'attempt';
+  selectedAttemptForPage: Attempt | null;
+  onAttemptCardPageBack: () => void;
+  onOpenAttemptPage: (a: Attempt) => void;
+}) {
+  const { loading, error, attempts, attemptViewMode, selectedAttemptForPage, onAttemptCardPageBack, onOpenAttemptPage } = props;
   const [detail, setDetail] = useState<AttemptDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
-  const [detailOpen, setDetailOpen] = useState(false);
 
-  async function openDetail(attempt: Attempt) {
-    setSelected(attempt);
+  async function loadDetail(attempt: Attempt) {
     setDetail(null);
     setDetailError(null);
     setDetailLoading(true);
-    setDetailOpen(true);
     try {
       let url: string;
       if (attempt.type === 'training' && attempt.sessionId) {
@@ -467,6 +521,12 @@ function EmployeesTab(props: { loading: boolean; error: string | null; attempts:
       setDetailLoading(false);
     }
   }
+
+  useEffect(() => {
+    if (attemptViewMode === 'attempt' && selectedAttemptForPage) {
+      loadDetail(selectedAttemptForPage);
+    }
+  }, [attemptViewMode, selectedAttemptForPage]);
   if (loading) {
     return (
       <Card shadow="sm">
@@ -481,16 +541,118 @@ function EmployeesTab(props: { loading: boolean; error: string | null; attempts:
       </Card>
     );
   }
+  if (attemptViewMode === 'attempt' && selectedAttemptForPage) {
+    const d = detail;
+    return (
+      <div className="space-y-4">
+        <Button size="sm" variant="flat" onPress={onAttemptCardPageBack} startContent={<span>←</span>}>
+          Назад
+        </Button>
+        <Card shadow="sm" className="admin-card-light">
+          <CardBody>
+            {detailLoading ? (
+              <div className="rounded-2xl admin-card-inner px-4 py-3 text-sm text-default-500">Загрузка…</div>
+            ) : detailError ? (
+              <div className="rounded-2xl admin-card-inner px-4 py-3 text-sm text-danger">Ошибка: {detailError}</div>
+            ) : d ? (
+              <div className="rounded-2xl admin-card-inner px-4 py-3 space-y-4">
+                <div className="flex justify-between items-center">
+                  <div>
+                    <div className="font-semibold text-sm">{d.userName}</div>
+                    <div className="text-[11px] text-default-500">{d.testTitle}</div>
+                  </div>
+                  {d.qualityTag && (
+                    <span className="text-[11px] px-2 py-1 rounded-full admin-badge-neutral">{d.qualityTag}</span>
+                  )}
+                </div>
+                <div className="text-2xl font-bold">{d.totalScore != null ? `${d.totalScore.toFixed(1)}/100` : 'Н/Д'}</div>
+                <div className="text-xs text-default-500 space-y-1">
+                  <div>Начало: {d.startedAt ? new Date(d.startedAt).toLocaleString('ru-RU') : '—'}</div>
+                  <div>Конец: {d.finishedAt ? new Date(d.finishedAt).toLocaleString('ru-RU') : '—'}</div>
+                </div>
+                {d.dimensionScores && (
+                  <div>
+                    <div className="text-xs font-semibold mb-1">Ключевые показатели</div>
+                    <div className="space-y-2">
+                      {Object.entries(d.dimensionScores).map(([key, value]) => {
+                        const v = typeof value === 'number' ? value : 0;
+                        const norm = v <= 1 ? v * 10 : v;
+                        const pct = Math.max(0, Math.min(10, norm)) * 10;
+                        const color = norm >= 8 ? 'bg-emerald-500' : norm >= 5 ? 'bg-amber-500' : 'bg-rose-500';
+                        const label = key.replace(/_/g, ' ');
+                        return (
+                          <div key={key} className="space-y-1">
+                            <div className="flex justify-between text-[11px] text-default-500">
+                              <span>{label}</span>
+                              <span>{norm.toFixed(1)}/10</span>
+                            </div>
+                            <div className="h-1.5 rounded-full admin-progress-track overflow-hidden">
+                              <div className={`h-full ${color}`} style={{ width: `${pct}%` }} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+                <div>
+                  <div className="text-xs font-semibold mb-1">✅ Сильные стороны</div>
+                  {d.strengths?.length ? (
+                    <ul className="text-xs text-default-500 list-disc pl-4 space-y-1">{d.strengths.map((s, i) => <li key={i}>{s}</li>)}</ul>
+                  ) : (
+                    <p className="text-xs text-default-500">Нет выделенных сильных сторон.</p>
+                  )}
+                </div>
+                <div>
+                  <div className="text-xs font-semibold mb-1">⚠️ Зоны роста</div>
+                  {d.weaknesses?.length ? (
+                    <ul className="text-xs text-default-500 list-disc pl-4 space-y-1">{d.weaknesses.map((w, i) => <li key={i}>{w}</li>)}</ul>
+                  ) : (
+                    <p className="text-xs text-default-500">Зоны роста не выделены.</p>
+                  )}
+                </div>
+                <div>
+                  <div className="text-xs font-semibold mb-1">💡 Рекомендации</div>
+                  {d.recommendations?.length ? (
+                    <ul className="text-xs text-default-500 list-disc pl-4 space-y-1">{d.recommendations.map((r, i) => <li key={i}>{r}</li>)}</ul>
+                  ) : (
+                    <p className="text-xs text-default-500">Отдельных рекомендаций нет.</p>
+                  )}
+                </div>
+                {!!d.steps?.length && (
+                  <div>
+                    <div className="text-xs font-semibold mb-1">Диалог по шагам</div>
+                    <div className="space-y-3">
+                      {d.steps.map((step) => (
+                        <div key={step.order} className="rounded-md admin-card-inner p-2 text-xs space-y-1">
+                          <div className="flex justify-between items-center">
+                            <span className="font-semibold">Шаг {step.order}</span>
+                            {step.score != null && <span className="text-[11px] text-default-500">Балл: {step.score.toFixed(1)}</span>}
+                          </div>
+                          <div><span className="font-semibold">Клиент:</span> <span className="text-default-500">{step.customerMessage}</span></div>
+                          <div><span className="font-semibold">Менеджер:</span> <span className="text-default-500">{step.answer}</span></div>
+                          {step.feedback && <div className="text-[11px] text-default-500">Отзыв: {step.feedback}</div>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : null}
+          </CardBody>
+        </Card>
+      </div>
+    );
+  }
   if (!attempts.length) {
     return (
-      <Card shadow="sm" className="bg-slate-900 border border-slate-800">
+      <Card shadow="sm" className="admin-card-light">
         <CardBody className="text-sm text-default-500">Пока нет оценённых звонков.</CardBody>
       </Card>
     );
   }
   return (
-    <>
-      <div className="space-y-3">
+    <div className="space-y-3">
         {attempts.map((a) => {
           const score = a.totalScore;
           const scoreClass =
@@ -502,9 +664,9 @@ function EmployeesTab(props: { loading: boolean; error: string | null; attempts:
             <Card
               key={a.id}
               isPressable
-              onPress={() => openDetail(a)}
+              onPress={() => onOpenAttemptPage(a)}
               shadow="sm"
-              className="bg-slate-900 border border-slate-800 w-full"
+              className="admin-card-light w-full"
             >
               <CardBody>
                 <div className="flex justify-between items-center mb-1">
@@ -526,167 +688,7 @@ function EmployeesTab(props: { loading: boolean; error: string | null; attempts:
             </Card>
           );
         })}
-      </div>
-
-      <Modal
-        isOpen={detailOpen && !!selected}
-        onOpenChange={setDetailOpen}
-        scrollBehavior="inside"
-        placement="bottom-center"
-        size="lg"
-      >
-        <ModalContent className="bg-transparent shadow-none">
-          {() => (
-            <>
-              <ModalHeader className="text-sm font-semibold">
-                {detail?.userName || selected?.userName || 'Карточка результата'}
-              </ModalHeader>
-              <ModalBody>
-                {detailLoading ? (
-                  <div className="rounded-2xl bg-slate-900 border border-slate-800 px-4 py-3 text-sm text-default-500">
-                    Загрузка…
-                  </div>
-                ) : detailError ? (
-                  <div className="rounded-2xl bg-slate-900 border border-slate-800 px-4 py-3 text-sm text-danger-400">
-                    Ошибка: {detailError}
-                  </div>
-                ) : detail ? (
-                  <div className="rounded-2xl bg-slate-900 border border-slate-800 px-4 py-3 space-y-4">
-                      <div className="flex justify-between items-center">
-                        <div>
-                          <div className="font-semibold text-sm">{detail.userName}</div>
-                          <div className="text-[11px] text-default-500">{detail.testTitle}</div>
-                        </div>
-                        {detail.qualityTag && (
-                          <span className="text-[11px] px-2 py-1 rounded-full bg-slate-800 text-slate-100">
-                            {detail.qualityTag}
-                          </span>
-                        )}
-                      </div>
-
-                      <div className="text-2xl font-bold">
-                        {detail.totalScore != null ? `${detail.totalScore.toFixed(1)}/100` : 'Н/Д'}
-                      </div>
-                      <div className="text-xs text-default-500 space-y-1">
-                        <div>
-                          Начало:{' '}
-                          {detail.startedAt ? new Date(detail.startedAt).toLocaleString('ru-RU') : '—'}
-                        </div>
-                        <div>
-                          Конец:{' '}
-                          {detail.finishedAt ? new Date(detail.finishedAt).toLocaleString('ru-RU') : '—'}
-                        </div>
-                      </div>
-
-                      {detail.dimensionScores && (
-                        <div>
-                          <div className="text-xs font-semibold mb-1">Ключевые показатели</div>
-                          <div className="space-y-2">
-                            {Object.entries(detail.dimensionScores).map(([key, value]) => {
-                              const v = typeof value === 'number' ? value : 0;
-                              const norm = v <= 1 ? v * 10 : v; // поддержка 0–1 и 0–10
-                              const pct = Math.max(0, Math.min(10, norm)) * 10;
-                              const color =
-                                norm >= 8 ? 'bg-emerald-500' : norm >= 5 ? 'bg-amber-500' : 'bg-rose-500';
-                              const label = key.replace(/_/g, ' ');
-                              return (
-                                <div key={key} className="space-y-1">
-                                  <div className="flex justify-between text-[11px] text-default-500">
-                                    <span>{label}</span>
-                                    <span>{norm.toFixed(1)}/10</span>
-                                  </div>
-                                  <div className="h-1.5 rounded-full bg-slate-800 overflow-hidden">
-                                    <div className={`h-full ${color}`} style={{ width: `${pct}%` }} />
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      )}
-
-                      <div>
-                        <div className="text-xs font-semibold mb-1">✅ Сильные стороны</div>
-                        {detail.strengths.length ? (
-                          <ul className="text-xs text-default-500 list-disc pl-4 space-y-1">
-                            {detail.strengths.map((s, i) => (
-                              <li key={i}>{s}</li>
-                            ))}
-                          </ul>
-                        ) : (
-                          <p className="text-xs text-default-500">Нет выделенных сильных сторон.</p>
-                        )}
-                      </div>
-
-                      <div>
-                        <div className="text-xs font-semibold mb-1">⚠️ Зоны роста</div>
-                        {detail.weaknesses.length ? (
-                          <ul className="text-xs text-default-500 list-disc pl-4 space-y-1">
-                            {detail.weaknesses.map((w, i) => (
-                              <li key={i}>{w}</li>
-                            ))}
-                          </ul>
-                        ) : (
-                          <p className="text-xs text-default-500">Зоны роста не выделены.</p>
-                        )}
-                      </div>
-
-                      <div>
-                        <div className="text-xs font-semibold mb-1">💡 Рекомендации</div>
-                        {detail.recommendations.length ? (
-                          <ul className="text-xs text-default-500 list-disc pl-4 space-y-1">
-                            {detail.recommendations.map((r, i) => (
-                              <li key={i}>{r}</li>
-                            ))}
-                          </ul>
-                        ) : (
-                          <p className="text-xs text-default-500">Отдельных рекомендаций нет.</p>
-                        )}
-                      </div>
-
-                      {!!detail.steps.length && (
-                        <div>
-                          <div className="text-xs font-semibold mb-1">Диалог по шагам</div>
-                          <div className="space-y-3">
-                            {detail.steps.map((step) => (
-                              <div
-                                key={step.order}
-                                className="rounded-md bg-slate-950/60 border border-slate-800 p-2 text-xs space-y-1"
-                              >
-                                <div className="flex justify-between items-center">
-                                  <span className="font-semibold">Шаг {step.order}</span>
-                                  {step.score != null && (
-                                    <span className="text-[11px] text-default-500">
-                                      Балл: {step.score.toFixed(1)}
-                                    </span>
-                                  )}
-                                </div>
-                                <div>
-                                  <span className="font-semibold">Клиент:</span>{' '}
-                                  <span className="text-default-500">{step.customerMessage}</span>
-                                </div>
-                                <div>
-                                  <span className="font-semibold">Менеджер:</span>{' '}
-                                  <span className="text-default-500">{step.answer}</span>
-                                </div>
-                                {step.feedback && (
-                                  <div className="text-[11px] text-default-500">
-                                    Отзыв: {step.feedback}
-                                  </div>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                  </div>
-                ) : null}
-              </ModalBody>
-            </>
-          )}
-        </ModalContent>
-      </Modal>
-    </>
+    </div>
   );
 }
 
@@ -694,8 +696,6 @@ function CallsTab(props: {
   loading: boolean;
   error: string | null;
   calls: CallSummary[];
-  scenario: 'dialog' | 'realtime' | 'realtime_pure';
-  onScenarioChange: (v: 'dialog' | 'realtime' | 'realtime_pure') => void;
   phone: string;
   onPhoneChange: (v: string) => void;
   startCallLoading: boolean;
@@ -706,13 +706,13 @@ function CallsTab(props: {
   callDetailLoading: boolean;
   callDetailError: string | null;
   onSelectCall: (id: number) => void;
+  callViewMode: 'list' | 'call';
+  onCallCardPageBack: () => void;
 }) {
   const {
     loading,
     error,
     calls,
-    scenario,
-    onScenarioChange,
     phone,
     onPhoneChange,
     startCallLoading,
@@ -723,12 +723,13 @@ function CallsTab(props: {
     callDetailLoading,
     callDetailError,
     onSelectCall,
+    callViewMode,
+    onCallCardPageBack,
   } = props;
 
   const [savedNumbers, setSavedNumbers] = useState<string[]>([]);
   const [savedNumbersLoading, setSavedNumbersLoading] = useState(false);
   const [savedOpen, setSavedOpen] = useState(false);
-  const [detailOpen, setDetailOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -756,44 +757,121 @@ function CallsTab(props: {
 
   const handleSelectCall = (id: number) => {
     onSelectCall(id);
-    setDetailOpen(true);
   };
+
+  if (callViewMode === 'call' && selectedCallId != null) {
+    return (
+      <div className="space-y-4">
+        <Button size="sm" variant="flat" onPress={onCallCardPageBack} startContent={<span>←</span>}>
+          Назад
+        </Button>
+        <Card shadow="sm" className="admin-card-light">
+          <CardBody>
+            {callDetailLoading ? (
+              <div className="rounded-2xl admin-card-inner px-4 py-3 text-sm text-default-500">
+                Загрузка…
+              </div>
+            ) : callDetailError ? (
+              <div className="rounded-2xl admin-card-inner px-4 py-3 text-sm text-danger">
+                Ошибка: {callDetailError}
+              </div>
+            ) : callDetail ? (
+              <div className="rounded-2xl admin-card-inner px-4 py-3 space-y-3">
+                <div className="flex justify-between items-center">
+                  <div className="font-semibold text-sm">{callDetail.to}</div>
+                  {callDetail.qualityTag && (
+                    <span className="text-[11px] px-2 py-1 rounded-full admin-badge-neutral">
+                      {callDetail.qualityTag}
+                    </span>
+                  )}
+                </div>
+                <div className="text-2xl font-bold">
+                  {callDetail.totalScore != null ? `${callDetail.totalScore.toFixed(1)}/100` : 'Н/Д'}
+                </div>
+                <div className="text-xs text-default-500 space-y-1">
+                  <div>Исход: {callDetail.outcome ?? '—'}</div>
+                  <div>
+                    Начало: {callDetail.startedAt ? new Date(callDetail.startedAt).toLocaleString('ru-RU') : '—'}
+                  </div>
+                  <div>
+                    Конец: {callDetail.endedAt ? new Date(callDetail.endedAt).toLocaleString('ru-RU') : '—'}
+                  </div>
+                </div>
+                {callDetail.dimensionScores && (
+                  <div>
+                    <div className="text-xs font-semibold mb-1">Ключевые показатели</div>
+                    <div className="space-y-2">
+                      {Object.entries(callDetail.dimensionScores).map(([key, value]) => {
+                        const v = typeof value === 'number' ? value : 0;
+                        const norm = v <= 1 ? v * 10 : v;
+                        const pct = Math.max(0, Math.min(10, norm)) * 10;
+                        const color =
+                          norm >= 8 ? 'bg-emerald-500' : norm >= 5 ? 'bg-amber-500' : 'bg-rose-500';
+                        const label = key.replace(/_/g, ' ');
+                        return (
+                          <div key={key} className="space-y-1">
+                            <div className="flex justify-between text-[11px] text-default-500">
+                              <span>{label}</span>
+                              <span>{norm.toFixed(1)}/10</span>
+                            </div>
+                            <div className="h-1.5 rounded-full admin-progress-track overflow-hidden">
+                              <div className={`h-full ${color}`} style={{ width: `${pct}%` }} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+                <div>
+                  <div className="text-xs font-semibold mb-1">✅ Сильные стороны</div>
+                  {callDetail.strengths?.length ? (
+                    <ul className="text-xs text-default-500 list-disc pl-4 space-y-1">
+                      {callDetail.strengths.map((s, i) => (
+                        <li key={i}>{s}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-xs text-default-500">Нет выделенных сильных сторон.</p>
+                  )}
+                </div>
+                <div>
+                  <div className="text-xs font-semibold mb-1">⚠️ Слабые стороны</div>
+                  {callDetail.weaknesses?.length ? (
+                    <ul className="text-xs text-default-500 list-disc pl-4 space-y-1">
+                      {callDetail.weaknesses.map((w, i) => (
+                        <li key={i}>{w}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-xs text-default-500">Слабые стороны не выделены.</p>
+                  )}
+                </div>
+                <div>
+                  <div className="text-xs font-semibold mb-1">💡 Рекомендации</div>
+                  {callDetail.recommendations?.length ? (
+                    <ul className="text-xs text-default-500 list-disc pl-4 space-y-1">
+                      {callDetail.recommendations.map((r, i) => (
+                        <li key={i}>{r}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-xs text-default-500">Отдельных рекомендаций нет.</p>
+                  )}
+                </div>
+              </div>
+            ) : null}
+          </CardBody>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
-      <Card shadow="sm" className="bg-slate-900 border border-slate-800">
+      <Card shadow="sm" className="admin-card-light">
         <CardBody>
           <div className="space-y-3">
-            <div className="space-y-1">
-              <div className="text-xs text-default-500">Сценарий</div>
-              <div className="flex gap-2">
-              <Button
-                size="sm"
-                variant={scenario === 'dialog' ? 'solid' : 'flat'}
-                color="primary"
-                onPress={() => onScenarioChange('dialog')}
-              >
-                Наш LLM
-              </Button>
-              <Button
-                size="sm"
-                variant={scenario === 'realtime' ? 'solid' : 'flat'}
-                color="primary"
-                onPress={() => onScenarioChange('realtime')}
-              >
-                Realtime (гибрид)
-              </Button>
-              <Button
-                size="sm"
-                variant={scenario === 'realtime_pure' ? 'solid' : 'flat'}
-                color="primary"
-                onPress={() => onScenarioChange('realtime_pure')}
-              >
-                Realtime (чистый)
-              </Button>
-              </div>
-            </div>
-
             <div className="space-y-1 relative">
               <Input
                 label="Номер телефона"
@@ -814,7 +892,7 @@ function CallsTab(props: {
                 }
               />
               {savedOpen && (
-                <div className="absolute z-20 left-0 right-0 mt-1 rounded-lg border border-slate-700 bg-slate-900 shadow-lg max-h-40 overflow-auto text-xs">
+                <div className="absolute z-20 left-0 right-0 mt-1 rounded-lg border border-default-200 admin-card-light shadow-lg max-h-40 overflow-auto text-xs">
                   {savedNumbersLoading ? (
                     <div className="px-3 py-2 text-default-500">Загрузка…</div>
                   ) : savedNumbers.length ? (
@@ -822,7 +900,7 @@ function CallsTab(props: {
                       <button
                         key={num}
                         type="button"
-                        className="w-full text-left px-3 py-2 hover:bg-slate-800"
+                        className="w-full text-left px-3 py-2 hover:bg-default-100 rounded-md"
                         onClick={() => {
                           onPhoneChange(num);
                           setSavedOpen(false);
@@ -895,7 +973,7 @@ function CallsTab(props: {
                   key={c.id}
                   isPressable
                   onPress={() => handleSelectCall(c.id)}
-                  className={`bg-slate-900 border border-slate-800 w-full ${selectedCallId === c.id ? 'border-primary-500 border-2' : ''}`}
+                  className={`admin-card-light w-full ${selectedCallId === c.id ? 'ring-2 ring-primary' : ''}`}
                   shadow="sm"
                 >
                   <CardBody>
@@ -920,124 +998,6 @@ function CallsTab(props: {
           </div>
         )}
       </div>
-
-      <Modal
-        isOpen={detailOpen && !!selectedCallId}
-        onOpenChange={setDetailOpen}
-        scrollBehavior="inside"
-        placement="bottom-center"
-        size="lg"
-      >
-        <ModalContent className="bg-transparent shadow-none">
-          {(onClose) => (
-            <>
-              <ModalHeader className="text-sm font-semibold">Карточка звонка</ModalHeader>
-              <ModalBody>
-                {callDetailLoading ? (
-                  <div className="rounded-2xl bg-slate-900 border border-slate-800 px-4 py-3 text-sm text-default-500">
-                    Загрузка…
-                  </div>
-                ) : callDetailError ? (
-                  <div className="rounded-2xl bg-slate-900 border border-slate-800 px-4 py-3 text-sm text-danger-400">
-                    Ошибка: {callDetailError}
-                  </div>
-                ) : callDetail ? (
-                  <div className="rounded-2xl bg-slate-900 border border-slate-800 px-4 py-3 space-y-3">
-                      <div className="flex justify-between items-center">
-                        <div className="font-semibold text-sm">{callDetail.to}</div>
-                        {callDetail.qualityTag && (
-                          <span className="text-[11px] px-2 py-1 rounded-full bg-slate-800 text-slate-100">
-                            {callDetail.qualityTag}
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-2xl font-bold">
-                        {callDetail.totalScore != null ? `${callDetail.totalScore.toFixed(1)}/100` : 'Н/Д'}
-                      </div>
-                      <div className="text-xs text-default-500 space-y-1">
-                        <div>Исход: {callDetail.outcome ?? '—'}</div>
-                        <div>
-                          Начало:{' '}
-                          {callDetail.startedAt ? new Date(callDetail.startedAt).toLocaleString('ru-RU') : '—'}
-                        </div>
-                        <div>
-                          Конец:{' '}
-                          {callDetail.endedAt ? new Date(callDetail.endedAt).toLocaleString('ru-RU') : '—'}
-                        </div>
-                      </div>
-
-                      {callDetail.dimensionScores && (
-                        <div>
-                          <div className="text-xs font-semibold mb-1">Ключевые показатели</div>
-                          <div className="space-y-2">
-                            {Object.entries(callDetail.dimensionScores).map(([key, value]) => {
-                              const v = typeof value === 'number' ? value : 0;
-                              const norm = v <= 1 ? v * 10 : v;
-                              const pct = Math.max(0, Math.min(10, norm)) * 10;
-                              const color =
-                                norm >= 8 ? 'bg-emerald-500' : norm >= 5 ? 'bg-amber-500' : 'bg-rose-500';
-                              const label = key.replace(/_/g, ' ');
-                              return (
-                                <div key={key} className="space-y-1">
-                                  <div className="flex justify-between text-[11px] text-default-500">
-                                    <span>{label}</span>
-                                    <span>{norm.toFixed(1)}/10</span>
-                                  </div>
-                                  <div className="h-1.5 rounded-full bg-slate-800 overflow-hidden">
-                                    <div className={`h-full ${color}`} style={{ width: `${pct}%` }} />
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      )}
-
-                      <div>
-                        <div className="text-xs font-semibold mb-1">✅ Сильные стороны</div>
-                        {callDetail.strengths.length ? (
-                          <ul className="text-xs text-default-500 list-disc pl-4 space-y-1">
-                            {callDetail.strengths.map((s, i) => (
-                              <li key={i}>{s}</li>
-                            ))}
-                          </ul>
-                        ) : (
-                          <p className="text-xs text-default-500">Нет выделенных сильных сторон.</p>
-                        )}
-                      </div>
-
-                      <div>
-                        <div className="text-xs font-semibold mb-1">⚠️ Слабые стороны</div>
-                        {callDetail.weaknesses.length ? (
-                          <ul className="text-xs text-default-500 list-disc pl-4 space-y-1">
-                            {callDetail.weaknesses.map((w, i) => (
-                              <li key={i}>{w}</li>
-                            ))}
-                          </ul>
-                        ) : (
-                          <p className="text-xs text-default-500">Слабые стороны не выделены.</p>
-                        )}
-                      </div>
-
-                      <div>
-                        <div className="text-xs font-semibold mb-1">💡 Рекомендации</div>
-                        {callDetail.recommendations.length ? (
-                          <ul className="text-xs text-default-500 list-disc pl-4 space-y-1">
-                            {callDetail.recommendations.map((r, i) => (
-                              <li key={i}>{r}</li>
-                            ))}
-                          </ul>
-                        ) : (
-                          <p className="text-xs text-default-500">Отдельных рекомендаций нет.</p>
-                        )}
-                      </div>
-                  </div>
-                ) : null}
-              </ModalBody>
-            </>
-          )}
-        </ModalContent>
-      </Modal>
     </div>
   );
 }
@@ -1047,21 +1007,21 @@ function TeamTab(props: { loading: boolean; error: string | null; summary: TeamS
 
   if (loading) {
     return (
-      <Card shadow="sm" className="bg-slate-900 border border-slate-800">
+      <Card shadow="sm" className="admin-card-light">
         <CardBody className="text-sm text-default-500">Загрузка командной статистики…</CardBody>
       </Card>
     );
   }
   if (error) {
     return (
-      <Card shadow="sm" className="bg-slate-900 border border-slate-800">
+      <Card shadow="sm" className="admin-card-light">
         <CardBody className="text-sm text-danger-400">Ошибка: {error}</CardBody>
       </Card>
     );
   }
   if (!summary) {
     return (
-      <Card shadow="sm" className="bg-slate-900 border border-slate-800">
+      <Card shadow="sm" className="admin-card-light">
         <CardBody className="text-sm text-default-500">Пока нет достаточных данных по команде.</CardBody>
       </Card>
     );
@@ -1075,7 +1035,7 @@ function TeamTab(props: { loading: boolean; error: string | null; summary: TeamS
   return (
     <div className="space-y-3">
       {/* Executive KPI */}
-      <Card shadow="sm" className="bg-slate-900 border border-slate-800">
+      <Card shadow="sm" className="admin-card-light">
         <CardBody>
           <div className="flex items-end justify-between gap-4">
             <div>
@@ -1109,7 +1069,7 @@ function TeamTab(props: { loading: boolean; error: string | null; summary: TeamS
 
       {/* Телефония и доступность */}
       {voice && (
-        <Card shadow="sm" className="bg-slate-900 border border-slate-800">
+        <Card shadow="sm" className="admin-card-light">
           <CardBody>
             <div className="text-xs font-semibold mb-2">Телефония и доступность</div>
             <div className="mb-3">
@@ -1119,7 +1079,7 @@ function TeamTab(props: { loading: boolean; error: string | null; summary: TeamS
                   {answeredPct}% / {missedPct}%
                 </span>
               </div>
-              <div className="h-2 rounded-full bg-slate-800 overflow-hidden">
+              <div className="h-2 rounded-full admin-progress-track overflow-hidden">
                 <div
                   className="h-full bg-emerald-500"
                   style={{ width: `${answeredPct}%` }}
@@ -1170,19 +1130,19 @@ function TeamTab(props: { loading: boolean; error: string | null; summary: TeamS
       )}
 
       {/* Уровень сотрудников */}
-      <Card shadow="sm" className="bg-slate-900 border border-slate-800">
+      <Card shadow="sm" className="admin-card-light">
         <CardBody>
           <div className="text-xs font-semibold mb-2">Уровень сотрудников</div>
           <div className="grid grid-cols-3 gap-2 text-center text-xs">
-            <div className="rounded-md bg-slate-950/60 border border-slate-800 p-2">
+            <div className="rounded-md admin-card-inner p-2">
               <div className="text-[11px] text-default-500 mb-1">Junior</div>
               <div className="text-lg font-semibold">{levelCounts.Junior}</div>
             </div>
-            <div className="rounded-md bg-slate-950/60 border border-slate-800 p-2">
+            <div className="rounded-md admin-card-inner p-2">
               <div className="text-[11px] text-default-500 mb-1">Middle</div>
               <div className="text-lg font-semibold">{levelCounts.Middle}</div>
             </div>
-            <div className="rounded-md bg-slate-950/60 border border-slate-800 p-2">
+            <div className="rounded-md admin-card-inner p-2">
               <div className="text-[11px] text-default-500 mb-1">Senior</div>
               <div className="text-lg font-semibold">{levelCounts.Senior}</div>
             </div>
@@ -1192,7 +1152,7 @@ function TeamTab(props: { loading: boolean; error: string | null; summary: TeamS
 
       {/* Сильные / слабые стороны команды */}
       {(topWeaknesses.length > 0 || topStrengths.length > 0) && (
-        <Card shadow="sm" className="bg-slate-900 border border-slate-800">
+        <Card shadow="sm" className="admin-card-light">
           <CardBody className="grid grid-cols-1 gap-4">
             {topWeaknesses.length > 0 && (
               <div>
@@ -1224,7 +1184,7 @@ function TeamTab(props: { loading: boolean; error: string | null; summary: TeamS
 
       {/* Экспертное резюме */}
       {expertSummary && (
-        <Card shadow="sm" className="bg-slate-900 border border-slate-800">
+        <Card shadow="sm" className="admin-card-light">
           <CardBody>
             <div className="text-xs font-semibold mb-1">Экспертное резюме</div>
             <p className="text-xs text-default-500 whitespace-pre-line">{expertSummary}</p>
@@ -1240,21 +1200,21 @@ function ExpensesTab(props: { loading: boolean; error: string | null; info: Expe
 
   if (loading) {
     return (
-      <Card shadow="sm" className="bg-slate-900 border border-slate-800">
+      <Card shadow="sm" className="admin-card-light">
         <CardBody className="text-sm text-default-500">Загрузка информации о расходах…</CardBody>
       </Card>
     );
   }
   if (error) {
     return (
-      <Card shadow="sm" className="bg-slate-900 border border-slate-800">
+      <Card shadow="sm" className="admin-card-light">
         <CardBody className="text-sm text-danger-400">Ошибка: {error}</CardBody>
       </Card>
     );
   }
   if (!info) {
     return (
-      <Card shadow="sm" className="bg-slate-900 border border-slate-800">
+      <Card shadow="sm" className="admin-card-light">
         <CardBody className="text-sm text-default-500">Данные о расходах пока недоступны.</CardBody>
       </Card>
     );
@@ -1264,7 +1224,7 @@ function ExpensesTab(props: { loading: boolean; error: string | null; info: Expe
 
   return (
     <div className="space-y-3">
-      <Card shadow="sm" className="bg-slate-900 border border-slate-800">
+      <Card shadow="sm" className="admin-card-light">
         <CardBody>
           <div className="text-xs text-default-500 mb-1">
             Период: {new Date(periodStart).toLocaleDateString('ru-RU')} —{' '}
@@ -1278,14 +1238,14 @@ function ExpensesTab(props: { loading: boolean; error: string | null; info: Expe
       </Card>
 
       {apiError && (
-        <Card shadow="sm" className="bg-slate-900 border border-amber-500/60">
+        <Card shadow="sm" className="admin-card-light border border-warning-200">
           <CardBody className="text-xs text-amber-300 whitespace-pre-line">
             {apiError}
           </CardBody>
         </Card>
       )}
 
-      <Card shadow="sm" className="bg-slate-900 border border-slate-800">
+      <Card shadow="sm" className="admin-card-light">
         <CardBody>
           <Button
             as="a"
@@ -1297,6 +1257,38 @@ function ExpensesTab(props: { loading: boolean; error: string | null; info: Expe
           >
             Открыть billing OpenAI
           </Button>
+        </CardBody>
+      </Card>
+    </div>
+  );
+}
+
+function DealerCompaniesTab() {
+  return (
+    <div className="space-y-3">
+      <Card shadow="sm" className="admin-card-light">
+        <CardBody>
+          <div className="text-sm font-semibold mb-1">Компании</div>
+          <p className="text-xs text-default-500 mb-3">
+            Список компаний и точек. В проде здесь будут реальные данные холдинга.
+          </p>
+          <div className="space-y-2 text-xs">
+            {mockHoldingDealers.map((d) => (
+              <div
+                key={d.id}
+                className="rounded-md admin-card-inner p-2 flex justify-between gap-3"
+              >
+                <div className="min-w-0">
+                  <div className="font-semibold truncate">{d.name}</div>
+                  <div className="text-[11px] text-default-500">Город: {d.city} · Менеджеров: {d.managers}</div>
+                </div>
+                <div className="text-right text-[11px]">
+                  <div className="text-xs text-default-500">AI‑рейтинг</div>
+                  <div className="text-lg font-semibold">{d.aiScore.toFixed(1)}/100</div>
+                </div>
+              </div>
+            ))}
+          </div>
         </CardBody>
       </Card>
     </div>
@@ -1390,7 +1382,7 @@ function SuperAdminView(props: {
 
   return (
     <div className="space-y-3">
-      <Card shadow="sm" className="bg-slate-900 border border-slate-800">
+      <Card shadow="sm" className="admin-card-light">
         <CardBody>
           <div className="text-xs text-default-500 mb-1">Роль: суперадмин (preview)</div>
           <div className="text-lg font-semibold mb-1">Дашборд платформы</div>
@@ -1409,15 +1401,15 @@ function SuperAdminView(props: {
                 </div>
               </div>
               <div className="grid grid-cols-3 gap-2 text-center text-xs">
-                <div className="rounded-md bg-slate-950/60 border border-slate-800 p-2">
+                <div className="rounded-md admin-card-inner p-2">
                   <div className="text-[11px] text-default-500 mb-1">Junior</div>
                   <div className="text-lg font-semibold">{summary.levelCounts.Junior}</div>
                 </div>
-                <div className="rounded-md bg-slate-950/60 border border-slate-800 p-2">
+                <div className="rounded-md admin-card-inner p-2">
                   <div className="text-[11px] text-default-500 mb-1">Middle</div>
                   <div className="text-lg font-semibold">{summary.levelCounts.Middle}</div>
                 </div>
-                <div className="rounded-md bg-slate-950/60 border border-slate-800 p-2">
+                <div className="rounded-md admin-card-inner p-2">
                   <div className="text-[11px] text-default-500 mb-1">Senior</div>
                   <div className="text-lg font-semibold">{summary.levelCounts.Senior}</div>
                 </div>
@@ -1430,7 +1422,7 @@ function SuperAdminView(props: {
       </Card>
 
       {voice && (
-        <Card shadow="sm" className="bg-slate-900 border border-slate-800">
+        <Card shadow="sm" className="admin-card-light">
           <CardBody>
             <div className="text-xs font-semibold mb-2">Телефония по платформе</div>
             <div className="grid grid-cols-2 gap-4 text-xs mb-2">
@@ -1450,14 +1442,14 @@ function SuperAdminView(props: {
         </Card>
       )}
 
-      <Card shadow="sm" className="bg-slate-900 border border-slate-800">
+      <Card shadow="sm" className="admin-card-light">
         <CardBody>
           <div className="text-sm font-semibold mb-2">Компании на платформе (mock)</div>
           <div className="space-y-2 text-xs">
             {mockPlatformCompanies.map((c) => (
               <div
                 key={c.id}
-                className="rounded-md bg-slate-950/60 border border-slate-800 p-2 flex justify-between gap-3"
+                className="rounded-md admin-card-inner p-2 flex justify-between gap-3"
               >
                 <div className="min-w-0">
                   <div className="font-semibold truncate">{c.name}</div>
@@ -1477,7 +1469,7 @@ function SuperAdminView(props: {
       </Card>
 
       {!loadingExpenses && expenses && (
-        <Card shadow="sm" className="bg-slate-900 border border-slate-800">
+        <Card shadow="sm" className="admin-card-light">
           <CardBody>
             <div className="text-xs font-semibold mb-1">Расходы OpenAI</div>
             <div className="text-2xl font-bold mb-1">
@@ -1491,7 +1483,7 @@ function SuperAdminView(props: {
         </Card>
       )}
 
-      <Card shadow="sm" className="bg-slate-900 border border-slate-800">
+      <Card shadow="sm" className="admin-card-light">
         <CardBody>
           <div className="text-sm font-semibold mb-1">Компании</div>
           <p className="text-xs text-default-500">
@@ -1509,7 +1501,7 @@ function CompanyAdminView(props: { summary: TeamSummary | null; voice: VoiceDash
 
   return (
     <div className="space-y-3">
-      <Card shadow="sm" className="bg-slate-900 border border-slate-800">
+      <Card shadow="sm" className="admin-card-light">
         <CardBody>
           <div className="text-xs text-default-500 mb-1">Роль: холдинг (preview)</div>
           <div className="text-lg font-semibold mb-1">Дашборд компании</div>
@@ -1528,15 +1520,15 @@ function CompanyAdminView(props: { summary: TeamSummary | null; voice: VoiceDash
                 </div>
               </div>
               <div className="grid grid-cols-3 gap-2 text-center text-xs">
-                <div className="rounded-md bg-slate-950/60 border border-slate-800 p-2">
+                <div className="rounded-md admin-card-inner p-2">
                   <div className="text-[11px] text-default-500 mb-1">Junior</div>
                   <div className="text-lg font-semibold">{summary.levelCounts.Junior}</div>
                 </div>
-                <div className="rounded-md bg-slate-950/60 border border-slate-800 p-2">
+                <div className="rounded-md admin-card-inner p-2">
                   <div className="text-[11px] text-default-500 mb-1">Middle</div>
                   <div className="text-lg font-semibold">{summary.levelCounts.Middle}</div>
                 </div>
-                <div className="rounded-md bg-slate-950/60 border border-slate-800 p-2">
+                <div className="rounded-md admin-card-inner p-2">
                   <div className="text-[11px] text-default-500 mb-1">Senior</div>
                   <div className="text-lg font-semibold">{summary.levelCounts.Senior}</div>
                 </div>
@@ -1547,7 +1539,7 @@ function CompanyAdminView(props: { summary: TeamSummary | null; voice: VoiceDash
           )}
         </CardBody>
       </Card>
-      <Card shadow="sm" className="bg-slate-900 border border-slate-800">
+      <Card shadow="sm" className="admin-card-light">
         <CardBody>
           <div className="text-sm font-semibold mb-1">Автосалоны холдинга</div>
           <p className="text-xs text-default-500 mb-2">
@@ -1557,7 +1549,7 @@ function CompanyAdminView(props: { summary: TeamSummary | null; voice: VoiceDash
             {mockHoldingDealers.map((d) => (
               <div
                 key={d.id}
-                className="rounded-md bg-slate-950/60 border border-slate-800 p-2 flex justify-between gap-3"
+                className="rounded-md admin-card-inner p-2 flex justify-between gap-3"
               >
                 <div className="min-w-0">
                   <div className="font-semibold truncate">{d.name}</div>
@@ -1578,7 +1570,7 @@ function CompanyAdminView(props: { summary: TeamSummary | null; voice: VoiceDash
         </CardBody>
       </Card>
       {voice && (
-        <Card shadow="sm" className="bg-slate-900 border border-slate-800">
+        <Card shadow="sm" className="admin-card-light">
           <CardBody>
             <div className="text-xs font-semibold mb-1">Телефония компании (preview)</div>
             <div className="text-[11px] text-default-500">
@@ -1599,7 +1591,6 @@ function StaffView(props: { loading: boolean; error: string | null; attempts: At
   const [mode, setMode] = useState<'home' | 'test'>('home');
   const [webHistory, setWebHistory] = useState<WebTestHistoryItem[]>([]);
   const [selectedWebItem, setSelectedWebItem] = useState<WebTestHistoryItem | null>(null);
-  const [detailOpen, setDetailOpen] = useState(false);
 
   useEffect(() => {
     try {
@@ -1644,11 +1635,6 @@ function StaffView(props: { loading: boolean; error: string | null; attempts: At
     }
   }, [webHistory]);
 
-  function openWebHistoryItem(item: WebTestHistoryItem) {
-    setSelectedWebItem(item);
-    setDetailOpen(true);
-  }
-
   if (mode === 'test') {
     return (
       <StaffTestScreen
@@ -1661,9 +1647,71 @@ function StaffView(props: { loading: boolean; error: string | null; attempts: At
     );
   }
 
+  if (selectedWebItem) {
+    const item = selectedWebItem;
+    return (
+      <div className="space-y-4">
+        <Button size="sm" variant="flat" onPress={() => setSelectedWebItem(null)} startContent={<span>←</span>}>
+          Назад
+        </Button>
+        <Card shadow="sm" className="admin-card-light">
+          <CardBody>
+            <div className="rounded-2xl admin-card-inner px-4 py-3 space-y-3 text-sm">
+              <div className="flex justify-between items-center">
+                <div className="font-semibold">Web‑тест (локальная сессия)</div>
+                <span
+                  className={`text-[11px] px-2 py-1 rounded-full ${
+                    item.status === 'unfinished' ? 'bg-amber-500/20 text-amber-300' : 'bg-emerald-500/20 text-emerald-300'
+                  }`}
+                >
+                  {item.status === 'unfinished' ? 'Не завершён' : 'Завершён'}
+                </span>
+              </div>
+              <div className="text-xs text-default-500 space-y-1">
+                <div>Дата: {new Date(item.createdAt).toLocaleString('ru-RU')}</div>
+                <div>Сообщений: {item.turns}</div>
+                <div>Session ID: {item.sessionId || '—'}</div>
+              </div>
+              {item.result && (
+                <div className="space-y-3 pt-2 border-t border-default-200">
+                  <div className="text-xl font-semibold">{item.result.totalScore}/100</div>
+                  <div className="text-xs text-default-400">{item.result.summary}</div>
+                  {!!item.result.recommendations?.length && (
+                    <div>
+                      <div className="text-xs font-semibold mb-1">💡 Рекомендации</div>
+                      <ul className="text-xs text-default-500 list-disc pl-4 space-y-1">
+                        {item.result.recommendations.map((r, i) => <li key={i}>{r}</li>)}
+                      </ul>
+                    </div>
+                  )}
+                  {!!item.result.strengths?.length && (
+                    <div>
+                      <div className="text-xs font-semibold mb-1">✅ Сильные стороны</div>
+                      <ul className="text-xs text-default-500 list-disc pl-4 space-y-1">
+                        {item.result.strengths.map((s, i) => <li key={i}>{s}</li>)}
+                      </ul>
+                    </div>
+                  )}
+                  {!!item.result.weaknesses?.length && (
+                    <div>
+                      <div className="text-xs font-semibold mb-1">⚠️ Зоны роста</div>
+                      <ul className="text-xs text-default-500 list-disc pl-4 space-y-1">
+                        {item.result.weaknesses.map((w, i) => <li key={i}>{w}</li>)}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </CardBody>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-3">
-      <Card shadow="sm" className="bg-slate-900 border border-slate-800">
+      <Card shadow="sm" className="admin-card-light">
         <CardBody>
           <div className="flex items-center justify-between mb-3">
             <div>
@@ -1691,7 +1739,7 @@ function StaffView(props: { loading: boolean; error: string | null; attempts: At
         </CardBody>
       </Card>
 
-      <Card shadow="sm" className="bg-slate-900 border border-slate-800">
+      <Card shadow="sm" className="admin-card-light">
         <CardBody className="space-y-3">
           <div className="text-sm font-semibold">История тестов</div>
           <Button size="lg" color="primary" fullWidth className="h-12 font-semibold" onPress={() => setMode('test')}>
@@ -1710,9 +1758,9 @@ function StaffView(props: { loading: boolean; error: string | null; attempts: At
                 <Card
                   key={item.id}
                   isPressable
-                  onPress={() => openWebHistoryItem(item)}
+                  onPress={() => setSelectedWebItem(item)}
                   shadow="sm"
-                  className="bg-slate-900 border border-slate-800 w-full"
+                  className="admin-card-light w-full"
                 >
                   <CardBody>
                     <div className="flex justify-between items-center mb-1">
@@ -1747,76 +1795,6 @@ function StaffView(props: { loading: boolean; error: string | null; attempts: At
         </CardBody>
       </Card>
 
-      <Modal
-        isOpen={detailOpen && !!selectedWebItem}
-        onOpenChange={setDetailOpen}
-        scrollBehavior="inside"
-        placement="bottom-center"
-        size="lg"
-      >
-        <ModalContent className="bg-transparent shadow-none">
-          {() => (
-            <>
-              <ModalHeader className="text-sm font-semibold">Карточка web‑теста</ModalHeader>
-              <ModalBody>
-                {selectedWebItem ? (
-                  <div className="rounded-2xl bg-slate-900 border border-slate-800 px-4 py-3 space-y-3 text-sm">
-                    <div className="flex justify-between items-center">
-                      <div className="font-semibold">Web‑тест (локальная сессия)</div>
-                      <span
-                        className={`text-[11px] px-2 py-1 rounded-full ${
-                          selectedWebItem.status === 'unfinished'
-                            ? 'bg-amber-500/20 text-amber-300'
-                            : 'bg-emerald-500/20 text-emerald-300'
-                        }`}
-                      >
-                        {selectedWebItem.status === 'unfinished' ? 'Не завершён' : 'Завершён'}
-                      </span>
-                    </div>
-                    <div className="text-xs text-default-500 space-y-1">
-                      <div>Дата: {new Date(selectedWebItem.createdAt).toLocaleString('ru-RU')}</div>
-                      <div>Сообщений: {selectedWebItem.turns}</div>
-                      <div>Session ID: {selectedWebItem.sessionId || '—'}</div>
-                    </div>
-                    {selectedWebItem.result && (
-                      <div className="space-y-3 pt-2 border-t border-slate-800">
-                        <div className="text-xl font-semibold">
-                          {selectedWebItem.result.totalScore}/100
-                        </div>
-                        <div className="text-xs text-default-400">{selectedWebItem.result.summary}</div>
-                        {!!selectedWebItem.result.recommendations.length && (
-                          <div>
-                            <div className="text-xs font-semibold mb-1">💡 Рекомендации</div>
-                            <ul className="text-xs text-default-500 list-disc pl-4 space-y-1">
-                              {selectedWebItem.result.recommendations.map((r, i) => <li key={i}>{r}</li>)}
-                            </ul>
-                          </div>
-                        )}
-                        {!!selectedWebItem.result.strengths.length && (
-                          <div>
-                            <div className="text-xs font-semibold mb-1">✅ Сильные стороны</div>
-                            <ul className="text-xs text-default-500 list-disc pl-4 space-y-1">
-                              {selectedWebItem.result.strengths.map((s, i) => <li key={i}>{s}</li>)}
-                            </ul>
-                          </div>
-                        )}
-                        {!!selectedWebItem.result.weaknesses.length && (
-                          <div>
-                            <div className="text-xs font-semibold mb-1">⚠️ Зоны роста</div>
-                            <ul className="text-xs text-default-500 list-disc pl-4 space-y-1">
-                              {selectedWebItem.result.weaknesses.map((w, i) => <li key={i}>{w}</li>)}
-                            </ul>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                ) : null}
-              </ModalBody>
-            </>
-          )}
-        </ModalContent>
-      </Modal>
     </div>
   );
 }
@@ -2150,8 +2128,8 @@ function StaffTestScreen(props: { onBack: () => void; onSessionClosed?: (item: W
 
   if (ended && finalResult) {
     return (
-      <div className="fixed inset-0 z-50 bg-background text-foreground flex flex-col">
-        <div className="px-3 md:px-6 py-3 border-b border-slate-800/80 flex items-center justify-between gap-2">
+      <div className="fixed inset-0 z-50 flex flex-col" style={{ background: 'var(--app-bg)', color: 'var(--text-body)' }}>
+        <div className="px-3 md:px-6 py-3 border-b flex items-center justify-between gap-2" style={{ borderColor: 'var(--block-border)' }}>
           <Button size="sm" variant="light" onPress={() => closeSessionAndExit(false)}>
             ← Назад
           </Button>
@@ -2160,7 +2138,7 @@ function StaffTestScreen(props: { onBack: () => void; onSessionClosed?: (item: W
         </div>
         <div className="flex-1 overflow-y-auto px-3 md:px-6 py-4">
           <div className="max-w-2xl mx-auto">
-            <Card shadow="sm" className="bg-slate-900 border border-slate-800">
+            <Card shadow="sm" className="admin-card-light">
               <CardBody className="space-y-4">
                 <div className="flex justify-between items-start">
                   <div className="text-sm text-default-500">Итоги диалога</div>
@@ -2217,8 +2195,8 @@ function StaffTestScreen(props: { onBack: () => void; onSessionClosed?: (item: W
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-background text-foreground flex flex-col">
-      <div className="px-3 md:px-6 py-3 border-b border-slate-800/80 flex items-center justify-between gap-2">
+    <div className="fixed inset-0 z-50 flex flex-col" style={{ background: 'var(--app-bg)', color: 'var(--text-body)' }}>
+      <div className="px-3 md:px-6 py-3 border-b flex items-center justify-between gap-2" style={{ borderColor: 'var(--block-border)' }}>
         <Button size="sm" variant="light" onPress={handleBackPress}>
           ← Назад
         </Button>
@@ -2244,7 +2222,7 @@ function StaffTestScreen(props: { onBack: () => void; onSessionClosed?: (item: W
                 className={`max-w-[86%] rounded-2xl px-3 py-2 ${
                   m.role === 'manager'
                     ? 'bg-primary-600 text-white rounded-br-sm'
-                    : 'bg-slate-700/65 border border-slate-500/20 text-slate-50 rounded-bl-sm'
+                    : 'bg-default-200/80 border border-default-300 text-default-800 rounded-bl-sm'
                 }`}
               >
                 {m.audioUrl ? (
@@ -2274,7 +2252,7 @@ function StaffTestScreen(props: { onBack: () => void; onSessionClosed?: (item: W
         </div>
       </div>
 
-      <div className="sticky bottom-0 border-t border-slate-800/80 bg-slate-950/95 backdrop-blur px-3 md:px-6 pt-3 pb-[calc(env(safe-area-inset-bottom)+12px)]">
+      <div className="sticky bottom-0 border-t backdrop-blur px-3 md:px-6 pt-3 pb-[calc(env(safe-area-inset-bottom)+12px)]" style={{ borderColor: 'var(--block-border)', background: 'var(--card-bg)' }}>
         <div className="flex justify-center items-center min-h-[84px]">
           <div className="relative">
             {recording && (
@@ -2341,7 +2319,7 @@ function StaffTestScreen(props: { onBack: () => void; onSessionClosed?: (item: W
       </div>
 
       <Modal isOpen={exitConfirmOpen} onOpenChange={setExitConfirmOpen} placement="center" size="sm">
-        <ModalContent className="bg-slate-900 border border-slate-800">
+        <ModalContent className="admin-card-light">
           {() => (
             <>
               <ModalHeader className="text-sm font-semibold">Незавершённый тест</ModalHeader>
@@ -2501,7 +2479,7 @@ function VoiceBubble(props: {
         type="button"
         onClick={togglePlay}
         className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
-          side === 'manager' ? 'bg-white/25 text-white' : 'bg-slate-600/55 text-slate-50'
+          side === 'manager' ? 'bg-white/25 text-white' : 'bg-default-300/70 text-default-800'
         }`}
       >
         {playing ? '❚❚' : '▶'}
@@ -2519,7 +2497,7 @@ function VoiceBubble(props: {
                     : 'bg-sky-200'
                   : side === 'manager'
                   ? 'bg-white/35'
-                  : 'bg-slate-400/35'
+                  : 'bg-default-400/40'
               } ${playing ? 'transition-all duration-150' : ''}`}
               style={{ height: `${8 + h * 10}px` }}
             />
@@ -2528,7 +2506,7 @@ function VoiceBubble(props: {
       </div>
       <div
         className={`text-[12px] min-w-[42px] text-right font-medium ${
-          side === 'manager' ? 'text-white/95' : 'text-slate-100'
+          side === 'manager' ? 'text-white/95' : 'text-default-800'
         }`}
       >
         {formatDuration(displayDuration)}
@@ -2539,7 +2517,7 @@ function VoiceBubble(props: {
 
 function ClientThinkingBubble() {
   return (
-    <div className="min-w-[220px] text-slate-100/90">
+    <div className="min-w-[220px] text-default-600">
       <div className="text-[11px] mb-1">Клиент записывает голосовое…</div>
       <div className="flex items-end gap-[2px] h-4">
         {Array.from({ length: 20 }).map((_, idx) => (

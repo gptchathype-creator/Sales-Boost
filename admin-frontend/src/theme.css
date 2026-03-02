@@ -1,0 +1,277 @@
+/* Global design tokens – clean, minimal, airy SaaS dashboard */
+
+:root {
+  /* Backgrounds */
+  --bg-app: #F6F6F6;
+  --bg-sidebar: #F2F2F2;
+  --bg-card: #FFFFFF;
+
+  /* Text */
+  --text-primary: #111827;
+  --text-secondary: #6B7280;
+  --text-muted: #9CA3AF;
+
+  /* Border */
+  --border-subtle: #ECECEC;
+
+  /* Status – success */
+  --success-text: #22C55E;
+  --success-bg: #EAFBEF;
+
+  /* Status – warning */
+  --warning-text: #F59E0B;
+  --warning-bg: #FFF7E6;
+
+  /* Status – danger */
+  --danger-text: #D96B6B;
+  --danger-bg: #FDECEC;
+
+  /* Good (soft blue) */
+  --good-text: #3B82F6;
+  --good-bg: #EAF2FF;
+
+  /* Shadows */
+  --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.06);
+  --shadow-popover: 0 12px 32px rgba(0, 0, 0, 0.08);
+
+  /* Radii */
+  --radius-card: 16px;
+  --radius-control: 12px;
+  --radius-pill: 999px;
+
+  /* Hover */
+  --hover-bg: rgba(0, 0, 0, 0.03);
+
+  /* Layout */
+  --sidebar-width: 260px;
+  --transition-ui: 180ms ease;
+}
+
+/* Legacy aliases for existing code (no logic change) */
+:root {
+  --app-bg: var(--bg-app);
+  --sidebar-bg: var(--bg-sidebar);
+  --card-bg: var(--bg-card);
+  --text-heading: var(--text-primary);
+  --text-body: var(--text-primary);
+  --card-radius: var(--radius-card);
+  --card-shadow: var(--shadow-card);
+  --card-padding: 24px;
+  --button-radius: var(--radius-control);
+  --sidebar-item-radius: var(--radius-control);
+  --transition-fast: var(--transition-ui);
+  --primary: #6366F1;
+}
+
+/* ========== LAYOUT ========== */
+.admin-app {
+  background: var(--bg-app) !important;
+  min-height: 100vh;
+  overflow-x: hidden; /* контент не выходит за пределы и не заходит на сайдбар */
+  --heroui-background: var(--bg-app);
+  --heroui-foreground: var(--text-primary);
+  --heroui-primary: var(--primary);
+}
+
+/* Sidebar – no harsh borders, soft shadow only */
+.admin-sidebar,
+.admin-drawer {
+  background: var(--bg-sidebar) !important;
+  border-right: none;
+  box-shadow: 2px 0 16px rgba(0, 0, 0, 0.04);
+}
+.admin-sidebar-inner {
+  color: var(--text-primary);
+}
+
+/* Content area — отступ задаётся в AdminLayout инлайном и в scoped style для надёжности */
+.admin-main {
+  background: var(--bg-app);
+  min-width: 0;
+  box-sizing: border-box;
+  overflow-x: hidden; /* контент не вылезает на сайдбар */
+}
+.admin-content {
+  padding: 32px;
+  max-width: 1400px;
+  margin: 0 auto;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+/* Page header – large title */
+.admin-page-header h1 {
+  font-size: 48px !important;
+  font-weight: 600 !important;
+  color: var(--text-primary) !important;
+  margin: 0 0 24px 0 !important;
+}
+
+/* ========== CARDS & SURFACES ========== */
+.admin-app [data-slot="base"],
+.admin-app .admin-card-light,
+.admin-app .admin-card-light [data-slot="base"],
+.admin-app [data-slot="base"].admin-card-light {
+  background: var(--bg-card) !important;
+  border: none !important;
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+  padding: 24px;
+  color: var(--text-primary);
+}
+
+.admin-app .admin-card-inner {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  color: var(--text-primary);
+}
+
+/* ========== TABLES ========== */
+.admin-app table {
+  border-collapse: collapse;
+  width: 100%;
+}
+.admin-app table th,
+.admin-app table td {
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 16px 20px;
+  height: 56px;
+  vertical-align: middle;
+  color: var(--text-primary);
+}
+.admin-app table th {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+.admin-app table tbody tr {
+  transition: background var(--transition-ui);
+}
+.admin-app table tbody tr:hover {
+  background: var(--hover-bg);
+}
+
+/* Table container as white card */
+.admin-app .admin-table-card {
+  background: var(--bg-card);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+/* ========== STATUS BADGES ========== */
+.admin-app .admin-badge-weak,
+.admin-app .admin-badge-danger {
+  color: var(--danger-text);
+  background: var(--danger-bg);
+  border-radius: var(--radius-pill);
+  padding: 6px 10px;
+  font-size: 13px;
+  border: none;
+}
+.admin-app .admin-badge-good {
+  color: var(--good-text);
+  background: var(--good-bg);
+  border-radius: var(--radius-pill);
+  padding: 6px 10px;
+  font-size: 13px;
+  border: none;
+}
+.admin-app .admin-badge-strong,
+.admin-app .admin-badge-success {
+  color: var(--success-text);
+  background: var(--success-bg);
+  border-radius: var(--radius-pill);
+  padding: 6px 10px;
+  font-size: 13px;
+  border: none;
+}
+.admin-app .admin-badge-warning {
+  color: var(--warning-text);
+  background: var(--warning-bg);
+  border-radius: var(--radius-pill);
+  padding: 6px 10px;
+  font-size: 13px;
+  border: none;
+}
+.admin-app .admin-badge-neutral,
+.admin-app .admin-badge-primary {
+  color: var(--primary);
+  background: var(--good-bg);
+  border-radius: var(--radius-pill);
+  padding: 6px 10px;
+  font-size: 13px;
+  border: none;
+}
+
+/* ========== CONTROLS ========== */
+.admin-app input[type="text"],
+.admin-app input[type="search"],
+.admin-app .admin-input {
+  height: 42px;
+  border-radius: var(--radius-control);
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  padding: 0 14px;
+  transition: box-shadow var(--transition-ui), border-color var(--transition-ui);
+}
+.admin-app input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+}
+
+.admin-app .admin-select-trigger,
+.admin-sidebar-inner [data-slot="trigger"] {
+  background: var(--bg-card) !important;
+  border-radius: var(--radius-control);
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
+  min-height: 44px;
+  transition: border-color var(--transition-ui), background var(--transition-ui);
+}
+.admin-sidebar-inner [data-slot="trigger"]:hover {
+  background: #F8F8F8 !important;
+  border-color: var(--border-subtle);
+}
+
+/* ========== BUTTONS ========== */
+.admin-app button[data-slot="base"],
+.admin-app [role="button"]:not(.admin-sidebar-nav-item) {
+  border-radius: var(--radius-control);
+  transition: transform var(--transition-ui), box-shadow var(--transition-ui), background var(--transition-ui);
+}
+.admin-app button[data-slot="base"]:hover,
+.admin-app [role="button"]:not(.admin-sidebar-nav-item):hover {
+  transform: translateY(-1px);
+}
+
+/* ========== PROGRESS TRACK ========== */
+.admin-app .admin-progress-track {
+  background: var(--hover-bg);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+}
+
+/* ========== KPI GRID ========== */
+.admin-kpi-grid {
+  display: grid;
+  gap: 24px;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+}
+
+/* ========== MOBILE ========== */
+@media (max-width: 767px) {
+  .admin-content {
+    padding: 16px;
+  }
+  .admin-page-header h1 {
+    font-size: 28px !important;
+  }
+}
+
+@media (max-width: 767px) {
+  .admin-kpi-grid {
+    grid-template-columns: 1fr;
+  }
+}

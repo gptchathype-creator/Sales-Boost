@@ -11,3 +11,4 @@ out/
 *.pem
 cert.pem
 key.pem
+.cursor/
