@@ -2011,3 +2011,127 @@
     padding: 6px 8px;
   }
 }
+
+/* ─── Sidebar profile section (bottom) ─── */
+.sa-sidebar-profile {
+  margin-top: auto;
+  padding-top: 16px;
+  border-top: 1px solid var(--sa-divider);
+}
+.sa-sidebar-profile-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  border-radius: 14px;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.18s ease;
+}
+.sa-sidebar-profile-btn:hover {
+  background: var(--sa-hover-bg);
+}
+.sa-sidebar-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(17, 24, 39, 0.06);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--sa-text-secondary);
+}
+.sa-sidebar-profile-info {
+  flex: 1;
+  min-width: 0;
+}
+.sa-sidebar-profile-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--sa-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sa-sidebar-profile-role {
+  font-size: 11px;
+  color: var(--sa-text-secondary);
+}
+.sa-sidebar-profile-chevron {
+  font-size: 10px;
+  color: var(--sa-text-secondary);
+  flex-shrink: 0;
+}
+.sa-sidebar-profile-menu {
+  margin-bottom: 8px;
+  background: var(--sa-card);
+  border-radius: 14px;
+  box-shadow: 0 -2px 16px rgba(17, 24, 39, 0.10), 0 4px 12px rgba(17, 24, 39, 0.06);
+  padding: 8px;
+  animation: sa-profile-fade-in 0.15s ease;
+}
+@keyframes sa-profile-fade-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.sa-sidebar-profile-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--sa-text);
+  transition: background 0.15s ease;
+}
+.sa-sidebar-profile-menu-item:hover,
+.sa-sidebar-profile-menu-item.active {
+  background: var(--sa-hover-bg);
+}
+.sa-sidebar-role-section {
+  padding-top: 6px;
+  margin-top: 6px;
+  border-top: 1px solid var(--sa-divider);
+}
+.sa-sidebar-role-label {
+  font-size: 11px;
+  color: var(--sa-text-secondary);
+  padding: 4px 12px;
+  font-weight: 500;
+}
+.sa-sidebar-role-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 12px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--sa-text);
+  transition: background 0.15s ease;
+}
+.sa-sidebar-role-item:hover {
+  background: var(--sa-hover-bg);
+}
+.sa-sidebar-role-item.active {
+  font-weight: 600;
+  color: var(--sa-text);
+}
+.sa-sidebar-role-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #3B82F6;
+  flex-shrink: 0;
+}

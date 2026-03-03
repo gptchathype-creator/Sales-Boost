@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import './super-admin-theme.css';
-import { SuperAdminSidebar, SIDEBAR_WIDTH } from './SuperAdminSidebar';
-import type { SuperAdminTab } from './SuperAdminSidebar';
+import { SuperAdminSidebar, SIDEBAR_WIDTH, getDefaultTab } from './SuperAdminSidebar';
+import type { SuperAdminTab, AdminRole } from './SuperAdminSidebar';
 import { Dashboard } from './pages/Dashboard';
 import { Companies } from './pages/Companies';
 import { DealershipDetail } from './pages/DealershipDetail';
@@ -10,8 +10,10 @@ import { EmployeeDetail } from './pages/EmployeeDetail';
 import { Audits } from './pages/Audits';
 import { AuditDetail } from './pages/AuditDetail';
 import { Analytics } from './pages/Analytics';
-import { Trainer } from './pages/Trainer';
 import { Settings } from './pages/Settings';
+import { DealerContent } from '../DealerViews';
+import type { DealerTab } from '../DealerViews';
+import { StaffProfileContent, StaffTrainerContent } from '../StaffViews';
 import type { PlatformSummary, PlatformVoice } from './types';
 import {
   fetchAudits,
@@ -29,11 +31,12 @@ export type SuperAdminLayoutProps = {
   summary: PlatformSummary | null;
   voice: PlatformVoice | null;
   loadingSummary: boolean;
-  onSwitchToDealer?: () => void;
+  role: AdminRole;
+  onRoleChange: (role: AdminRole) => void;
 };
 
-export function SuperAdminLayout({ summary, voice, loadingSummary, onSwitchToDealer }: SuperAdminLayoutProps) {
-  const [activeTab, setActiveTab] = useState<SuperAdminTab>('dashboard');
+export function SuperAdminLayout({ summary, voice, loadingSummary, role, onRoleChange }: SuperAdminLayoutProps) {
+  const [activeTab, setActiveTab] = useState<SuperAdminTab>(() => getDefaultTab(role));
   const [selectedDealershipId, setSelectedDealershipId] = useState<string | null>(null);
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
   const [selectedAuditId, setSelectedAuditId] = useState<string | null>(null);
@@ -43,6 +46,10 @@ export function SuperAdminLayout({ summary, voice, loadingSummary, onSwitchToDea
     setSelectedDealershipId(null);
     setSelectedEmployeeId(null);
     setSelectedAuditId(null);
+  };
+
+  const handleRoleChange = (newRole: AdminRole) => {
+    onRoleChange(newRole);
   };
 
   const [audits, setAudits] = useState<AuditItem[]>([]);
@@ -55,6 +62,18 @@ export function SuperAdminLayout({ summary, voice, loadingSummary, onSwitchToDea
   const [backendNotRunning, setBackendNotRunning] = useState(false);
 
   useEffect(() => {
+    if (role !== 'super' && role !== 'company') {
+      setAudits([]);
+      setTimeSeries([]);
+      setCompanies([]);
+      setDealers([]);
+      setSettings(null);
+      setAuditsLoading(false);
+      setDataLoading(false);
+      setBackendNotRunning(false);
+      return;
+    }
+
     let cancelled = false;
     setDataLoading(true);
     setBackendNotRunning(false);
@@ -72,7 +91,7 @@ export function SuperAdminLayout({ summary, voice, loadingSummary, onSwitchToDea
         setDealers(mock.dealers);
         setSettings(st);
       })
-      .catch((err) => {
+      .catch(() => {
         if (!cancelled) {
           setAudits([]);
           setTimeSeries([]);
@@ -91,11 +110,18 @@ export function SuperAdminLayout({ summary, voice, loadingSummary, onSwitchToDea
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [role]);
+
+  const isSuperOrCompany = role === 'super' || role === 'company';
 
   return (
     <div className="super-admin-app">
-      <SuperAdminSidebar activeTab={activeTab} onTab={handleTabChange} onSwitchToDealer={onSwitchToDealer} />
+      <SuperAdminSidebar
+        activeTab={activeTab}
+        onTab={handleTabChange}
+        role={role}
+        onRoleChange={handleRoleChange}
+      />
       <main
         className="super-admin-main"
         style={{
@@ -106,7 +132,7 @@ export function SuperAdminLayout({ summary, voice, loadingSummary, onSwitchToDea
         }}
       >
         <div className="super-admin-content">
-          {backendNotRunning && (
+          {backendNotRunning && isSuperOrCompany && (
             <div
               style={{
                 marginBottom: 24,
@@ -125,64 +151,82 @@ export function SuperAdminLayout({ summary, voice, loadingSummary, onSwitchToDea
               (сервер будет на порту 3000, Vite проксирует сюда запросы /api). Затем обновите страницу.
             </div>
           )}
-          {activeTab === 'dashboard' && (
-            <Dashboard
-              summary={summary}
-              voice={voice}
-              loading={loadingSummary}
-              timeSeries={timeSeries}
-              companies={companies}
-              totalAudits={audits.length}
-              audits={audits}
-            />
+
+          {/* ── Super / Company role content ── */}
+          {isSuperOrCompany && (
+            <>
+              {activeTab === 'dashboard' && (
+                <Dashboard
+                  summary={summary}
+                  voice={voice}
+                  loading={loadingSummary}
+                  timeSeries={timeSeries}
+                  companies={companies}
+                  totalAudits={audits.length}
+                  audits={audits}
+                />
+              )}
+              {activeTab === 'companies' && !selectedDealershipId && (
+                <Companies companies={companies} loading={dataLoading} onSelectDealership={setSelectedDealershipId} />
+              )}
+              {activeTab === 'companies' && selectedDealershipId && (
+                <DealershipDetail dealershipId={selectedDealershipId} onBack={() => setSelectedDealershipId(null)} />
+              )}
+              {activeTab === 'autodealers' && !selectedEmployeeId && (
+                <Autodealers dealers={dealers} loading={dataLoading} onSelectEmployee={setSelectedEmployeeId} />
+              )}
+              {activeTab === 'autodealers' && selectedEmployeeId && (
+                <EmployeeDetail employeeId={selectedEmployeeId} onBack={() => setSelectedEmployeeId(null)} />
+              )}
+              {activeTab === 'audits' && !selectedAuditId && (
+                <Audits audits={audits} loading={auditsLoading} onOpenDetail={setSelectedAuditId} />
+              )}
+              {activeTab === 'audits' && selectedAuditId && (
+                <AuditDetail
+                  auditId={selectedAuditId}
+                  onBack={() => setSelectedAuditId(null)}
+                  onNavigate={setSelectedAuditId}
+                  onOpenEmployee={(empId) => {
+                    setSelectedAuditId(null);
+                    setActiveTab('autodealers');
+                    setSelectedEmployeeId(empId);
+                  }}
+                />
+              )}
+              {activeTab === 'analytics' && (
+                <Analytics
+                  summary={summary}
+                  timeSeries={timeSeries}
+                  loading={loadingSummary}
+                  onDrill={(type, filter) => {
+                    if (type === 'employees') {
+                      setActiveTab('autodealers');
+                    } else if (type === 'dealership' && filter) {
+                      setActiveTab('companies');
+                      setSelectedDealershipId(filter);
+                    } else if (type === 'audits') {
+                      setActiveTab('audits');
+                    }
+                  }}
+                />
+              )}
+            </>
           )}
-          {activeTab === 'companies' && !selectedDealershipId && (
-            <Companies companies={companies} loading={dataLoading} onSelectDealership={setSelectedDealershipId} />
+
+          {/* ── Dealer role content ── */}
+          {role === 'dealer' && activeTab.startsWith('dealer-') && (
+            <DealerContent summary={summary} voice={voice} loadingSummary={loadingSummary} activeTab={activeTab as DealerTab} />
           )}
-          {activeTab === 'companies' && selectedDealershipId && (
-            <DealershipDetail dealershipId={selectedDealershipId} onBack={() => setSelectedDealershipId(null)} />
+
+          {/* ── Staff role content ── */}
+          {role === 'staff' && activeTab === 'staff-profile' && (
+            <StaffProfileContent />
           )}
-          {activeTab === 'autodealers' && !selectedEmployeeId && (
-            <Autodealers dealers={dealers} loading={dataLoading} onSelectEmployee={setSelectedEmployeeId} />
+          {role === 'staff' && activeTab === 'staff-trainer' && (
+            <StaffTrainerContent />
           )}
-          {activeTab === 'autodealers' && selectedEmployeeId && (
-            <EmployeeDetail employeeId={selectedEmployeeId} onBack={() => setSelectedEmployeeId(null)} />
-          )}
-          {activeTab === 'audits' && !selectedAuditId && (
-            <Audits audits={audits} loading={auditsLoading} onOpenDetail={setSelectedAuditId} />
-          )}
-          {activeTab === 'audits' && selectedAuditId && (
-            <AuditDetail
-              auditId={selectedAuditId}
-              onBack={() => setSelectedAuditId(null)}
-              onNavigate={setSelectedAuditId}
-              onOpenEmployee={(empId) => {
-                setSelectedAuditId(null);
-                setActiveTab('autodealers');
-                setSelectedEmployeeId(empId);
-              }}
-            />
-          )}
-          {activeTab === 'analytics' && (
-            <Analytics
-              summary={summary}
-              timeSeries={timeSeries}
-              loading={loadingSummary}
-              onDrill={(type, filter) => {
-                if (type === 'employees') {
-                  setActiveTab('autodealers');
-                } else if (type === 'dealership' && filter) {
-                  setActiveTab('companies');
-                  setSelectedDealershipId(filter);
-                } else if (type === 'audits') {
-                  setActiveTab('audits');
-                }
-              }}
-            />
-          )}
-          {activeTab === 'trainer' && (
-            <Trainer audits={audits} summary={summary} loading={auditsLoading} />
-          )}
+
+          {/* ── Settings (available for all roles) ── */}
           {activeTab === 'settings' && (
             <Settings settings={settings} loading={dataLoading} />
           )}

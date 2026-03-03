@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 
 export type SuperAdminTab =
   | 'dashboard'
@@ -6,19 +6,54 @@ export type SuperAdminTab =
   | 'autodealers'
   | 'audits'
   | 'analytics'
-  | 'trainer'
-  | 'settings';
+  | 'settings'
+  | 'dealer-companies'
+  | 'dealer-calls'
+  | 'dealer-employees'
+  | 'dealer-team'
+  | 'staff-profile'
+  | 'staff-trainer';
+
+export type AdminRole = 'super' | 'company' | 'dealer' | 'staff';
 
 const SIDEBAR_WIDTH = 260;
 
-const navItems: { id: SuperAdminTab; label: string; icon: React.ReactNode }[] = [
+const ROLE_LABELS: Record<AdminRole, string> = {
+  super: 'Суперадмин',
+  company: 'Холдинг',
+  dealer: 'Автосалон',
+  staff: 'Сотрудник',
+};
+
+type NavItem = { id: SuperAdminTab; label: string; icon: React.ReactNode };
+
+const SUPER_NAV: NavItem[] = [
   { id: 'dashboard', label: 'Дашборд', icon: <DashboardIcon /> },
   { id: 'companies', label: 'Автосалоны', icon: <CompaniesIcon /> },
   { id: 'autodealers', label: 'Сотрудники', icon: <DealersIcon /> },
   { id: 'audits', label: 'Проверки', icon: <AuditsIcon /> },
   { id: 'analytics', label: 'Аналитика', icon: <AnalyticsIcon /> },
-  { id: 'trainer', label: 'Тренажёр', icon: <TrainerIcon /> },
-  { id: 'settings', label: 'Настройки', icon: <SettingsIcon /> },
+];
+
+const DEALER_NAV: NavItem[] = [
+  { id: 'dealer-companies', label: 'Компании', icon: <CompaniesIcon /> },
+  { id: 'dealer-calls', label: 'Звонки', icon: <PhoneIcon /> },
+  { id: 'dealer-employees', label: 'Сотрудники', icon: <DealersIcon /> },
+  { id: 'dealer-team', label: 'Команда', icon: <AnalyticsIcon /> },
+];
+
+function TrainerIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M12 2a3 3 0 00-3 3v6a3 3 0 106 0V5a3 3 0 00-3-3z" />
+      <path d="M19 10a1 1 0 10-2 0 5 5 0 01-10 0 1 1 0 10-2 0 7 7 0 005 6.71V20H8a1 1 0 100 2h8a1 1 0 100-2h-3v-3.29A7 7 0 0019 10z" />
+    </svg>
+  );
+}
+
+const STAFF_NAV: NavItem[] = [
+  { id: 'staff-profile', label: 'Профиль', icon: <ProfileIcon /> },
+  { id: 'staff-trainer', label: 'Тренажёр', icon: <TrainerIcon /> },
 ];
 
 function DashboardIcon() {
@@ -42,8 +77,9 @@ function CompaniesIcon() {
 function DealersIcon() {
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <circle cx="12" cy="12" r="3" />
-      <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
+      <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" />
     </svg>
   );
 }
@@ -62,10 +98,10 @@ function AnalyticsIcon() {
     </svg>
   );
 }
-function TrainerIcon() {
+function PhoneIcon() {
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2zM22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z" />
+      <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7A2 2 0 0122 16.92z" />
     </svg>
   );
 }
@@ -77,14 +113,49 @@ function SettingsIcon() {
     </svg>
   );
 }
+function ProfileIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" />
+      <circle cx="12" cy="7" r="4" />
+    </svg>
+  );
+}
+
+function getDefaultTab(role: AdminRole): SuperAdminTab {
+  if (role === 'dealer') return 'dealer-companies';
+  if (role === 'staff') return 'staff-profile';
+  return 'dashboard';
+}
 
 type Props = {
   activeTab: SuperAdminTab;
   onTab: (tab: SuperAdminTab) => void;
-  onSwitchToDealer?: () => void;
+  role: AdminRole;
+  onRoleChange: (role: AdminRole) => void;
 };
 
-export function SuperAdminSidebar({ activeTab, onTab, onSwitchToDealer }: Props) {
+export function SuperAdminSidebar({ activeTab, onTab, role, onRoleChange }: Props) {
+  const [profileOpen, setProfileOpen] = useState(false);
+  const profileRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!profileOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (profileRef.current && !profileRef.current.contains(e.target as Node)) {
+        setProfileOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [profileOpen]);
+
+  const navItems = useMemo(() => {
+    if (role === 'dealer') return DEALER_NAV;
+    if (role === 'staff') return STAFF_NAV;
+    return SUPER_NAV;
+  }, [role]);
+
   return (
     <aside
       className="super-admin-sidebar"
@@ -104,8 +175,11 @@ export function SuperAdminSidebar({ activeTab, onTab, onSwitchToDealer }: Props)
         <h2 style={{ margin: '0 0 4px', fontSize: 18, fontWeight: 600, color: 'var(--sa-text)' }}>
           Sales Boost
         </h2>
-        <p style={{ margin: 0, fontSize: 12, color: 'var(--sa-text-secondary)' }}>Управление холдингом</p>
+        <p style={{ margin: 0, fontSize: 12, color: 'var(--sa-text-secondary)' }}>
+          {ROLE_LABELS[role]}
+        </p>
       </div>
+
       <nav style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
         {navItems.map((item) => (
           <button
@@ -131,29 +205,57 @@ export function SuperAdminSidebar({ activeTab, onTab, onSwitchToDealer }: Props)
           </button>
         ))}
       </nav>
-      {onSwitchToDealer && (
-        <div style={{ paddingTop: 16, borderTop: '1px solid var(--sa-divider)' }}>
-          <button
-            type="button"
-            onClick={onSwitchToDealer}
-            style={{
-              width: '100%',
-              padding: '10px 16px',
-              fontSize: 13,
-              color: 'var(--sa-text-secondary)',
-              background: 'transparent',
-              border: 'none',
-              borderRadius: 999,
-              cursor: 'pointer',
-              textAlign: 'left',
-            }}
-          >
-            ← Режим дилера
-          </button>
-        </div>
-      )}
+
+      <div className="sa-sidebar-profile" ref={profileRef} style={{ position: 'relative' }}>
+        {profileOpen && (
+          <div className="sa-sidebar-profile-menu">
+            <button
+              type="button"
+              className={`sa-sidebar-profile-menu-item ${activeTab === 'settings' ? 'active' : ''}`}
+              onClick={() => { onTab('settings'); setProfileOpen(false); }}
+            >
+              <SettingsIcon />
+              <span>Настройки</span>
+            </button>
+
+            <div className="sa-sidebar-role-section">
+              <div className="sa-sidebar-role-label">Сменить роль (MVP)</div>
+              {(['super', 'company', 'dealer', 'staff'] as AdminRole[]).map((r) => (
+                <button
+                  key={r}
+                  type="button"
+                  className={`sa-sidebar-role-item ${role === r ? 'active' : ''}`}
+                  onClick={() => {
+                    onRoleChange(r);
+                    onTab(getDefaultTab(r));
+                    setProfileOpen(false);
+                  }}
+                >
+                  {role === r && <span className="sa-sidebar-role-dot" />}
+                  {ROLE_LABELS[r]}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <button
+          type="button"
+          className="sa-sidebar-profile-btn"
+          onClick={() => setProfileOpen(!profileOpen)}
+        >
+          <div className="sa-sidebar-avatar">
+            <ProfileIcon />
+          </div>
+          <div className="sa-sidebar-profile-info">
+            <div className="sa-sidebar-profile-name">Администратор</div>
+            <div className="sa-sidebar-profile-role">{ROLE_LABELS[role]}</div>
+          </div>
+          <span className="sa-sidebar-profile-chevron">{profileOpen ? '▲' : '▼'}</span>
+        </button>
+      </div>
     </aside>
   );
 }
 
-export { SIDEBAR_WIDTH };
+export { SIDEBAR_WIDTH, getDefaultTab };
