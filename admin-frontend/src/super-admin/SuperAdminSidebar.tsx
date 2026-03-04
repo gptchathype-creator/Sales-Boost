@@ -36,7 +36,6 @@ const SUPER_NAV: NavItem[] = [
 ];
 
 const DEALER_NAV: NavItem[] = [
-  { id: 'dealer-companies', label: 'Компании', icon: <CompaniesIcon /> },
   { id: 'dealer-calls', label: 'Звонки', icon: <PhoneIcon /> },
   { id: 'dealer-employees', label: 'Сотрудники', icon: <DealersIcon /> },
   { id: 'dealer-team', label: 'Команда', icon: <AnalyticsIcon /> },
@@ -123,7 +122,7 @@ function ProfileIcon() {
 }
 
 function getDefaultTab(role: AdminRole): SuperAdminTab {
-  if (role === 'dealer') return 'dealer-companies';
+  if (role === 'dealer') return 'dealer-calls';
   if (role === 'staff') return 'staff-profile';
   return 'dashboard';
 }

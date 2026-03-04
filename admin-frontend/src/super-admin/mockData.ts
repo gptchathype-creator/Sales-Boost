@@ -278,7 +278,20 @@ function buildRow(seed: DealershipSeed): DealershipRow {
 
 function buildDetail(seed: DealershipSeed): DealershipDetail {
   const seedNum = parseInt(seed.id.replace('d', ''), 10);
-  const employees = generateEmployees(seed);
+  const employeesFull = MOCK_EMPLOYEES.filter((e) => e.dealershipId === seed.id);
+  const employees: EmployeeRow[] = employeesFull.map((e) => ({
+    id: e.id,
+    name: e.fullName,
+    aiRating: e.aiRating,
+    auditsCount: e.auditsCount,
+    typicalError: e.topMistakeLabel,
+    status:
+      e.status === 'critical'
+        ? 'Нуждается в обучении'
+        : e.status === 'risk'
+        ? 'Стажёр'
+        : 'Стабильно',
+  }));
   const empNames = employees.map((e) => e.name);
   const audits = generateAudits(seed, empNames);
   const timeSeries = generateTimeSeries(seed.aiRating, 14, seedNum);

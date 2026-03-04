@@ -10,7 +10,7 @@ import {
   type TranscriptLine,
   type AuditEvent,
 } from '../mockData';
-import { ratingClass, statusBadgeClass } from '../utils';
+import { ratingClass, statusBadgeClass, exportPageToPdf } from '../utils';
 
 type Props = {
   auditId: string;
@@ -223,7 +223,7 @@ export function AuditDetail({ auditId, onBack, onNavigate, onOpenEmployee }: Pro
           <span className={`sa-status-badge ${AUDIT_STATUS_CLASS[detail.status]}`}>
             {AUDIT_STATUS_LABELS[detail.status]}
           </span>
-          <button className="sa-btn-outline" disabled title="Скоро">Экспорт PDF</button>
+          <button className="sa-btn-outline" onClick={() => exportPageToPdf(`Проверка_${detail.id}`)}>Экспорт PDF</button>
         </div>
       </div>
 

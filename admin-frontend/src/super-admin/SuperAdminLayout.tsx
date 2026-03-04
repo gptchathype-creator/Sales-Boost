@@ -15,6 +15,7 @@ import { DealerContent } from '../DealerViews';
 import type { DealerTab } from '../DealerViews';
 import { StaffProfileContent, StaffTrainerContent } from '../StaffViews';
 import type { PlatformSummary, PlatformVoice } from './types';
+import { getMockDealershipDetail } from './mockData';
 import {
   fetchAudits,
   fetchTimeSeries,
@@ -40,12 +41,14 @@ export function SuperAdminLayout({ summary, voice, loadingSummary, role, onRoleC
   const [selectedDealershipId, setSelectedDealershipId] = useState<string | null>(null);
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
   const [selectedAuditId, setSelectedAuditId] = useState<string | null>(null);
+  const [employeeSourceDealership, setEmployeeSourceDealership] = useState<{ id: string; name: string } | null>(null);
 
   const handleTabChange = (tab: SuperAdminTab) => {
     setActiveTab(tab);
     setSelectedDealershipId(null);
     setSelectedEmployeeId(null);
     setSelectedAuditId(null);
+    setEmployeeSourceDealership(null);
   };
 
   const handleRoleChange = (newRole: AdminRole) => {
@@ -114,6 +117,14 @@ export function SuperAdminLayout({ summary, voice, loadingSummary, role, onRoleC
 
   const isSuperOrCompany = role === 'super' || role === 'company';
 
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'auto' });
+    const main = document.querySelector('.super-admin-main');
+    if (main && 'scrollTop' in main) {
+      (main as HTMLElement).scrollTop = 0;
+    }
+  }, [activeTab, selectedDealershipId, selectedEmployeeId, selectedAuditId]);
+
   return (
     <div className="super-admin-app">
       <SuperAdminSidebar
@@ -170,13 +181,63 @@ export function SuperAdminLayout({ summary, voice, loadingSummary, role, onRoleC
                 <Companies companies={companies} loading={dataLoading} onSelectDealership={setSelectedDealershipId} />
               )}
               {activeTab === 'companies' && selectedDealershipId && (
-                <DealershipDetail dealershipId={selectedDealershipId} onBack={() => setSelectedDealershipId(null)} />
+                <DealershipDetail
+                  dealershipId={selectedDealershipId}
+                  onBack={() => setSelectedDealershipId(null)}
+                  onOpenEmployee={(empId) => {
+                    const sourceId = selectedDealershipId;
+                    const sourceName = sourceId
+                      ? (
+                        getMockDealershipDetail(sourceId)?.name
+                        ?? companies.find((c) => c.id === sourceId)?.name
+                        ?? sourceId
+                      )
+                      : 'Автосалон';
+                    setSelectedDealershipId(null);
+                    setActiveTab('autodealers');
+                    setSelectedEmployeeId(empId);
+                    if (sourceId) {
+                      setEmployeeSourceDealership({ id: sourceId, name: sourceName });
+                    }
+                  }}
+                />
               )}
               {activeTab === 'autodealers' && !selectedEmployeeId && (
-                <Autodealers dealers={dealers} loading={dataLoading} onSelectEmployee={setSelectedEmployeeId} />
+                <Autodealers
+                  dealers={dealers}
+                  loading={dataLoading}
+                  onSelectEmployee={(id) => {
+                    setEmployeeSourceDealership(null);
+                    setSelectedEmployeeId(id);
+                  }}
+                />
               )}
               {activeTab === 'autodealers' && selectedEmployeeId && (
-                <EmployeeDetail employeeId={selectedEmployeeId} onBack={() => setSelectedEmployeeId(null)} />
+                <EmployeeDetail
+                  employeeId={selectedEmployeeId}
+                  onBack={() => {
+                    if (employeeSourceDealership) {
+                      setSelectedEmployeeId(null);
+                      setActiveTab('companies');
+                      setSelectedDealershipId(employeeSourceDealership.id);
+                      return;
+                    }
+                    setSelectedEmployeeId(null);
+                  }}
+                  onOpenDealership={(dealershipId) => {
+                    setEmployeeSourceDealership(null);
+                    setSelectedEmployeeId(null);
+                    setActiveTab('companies');
+                    setSelectedDealershipId(dealershipId);
+                  }}
+                  onOpenCompanies={() => {
+                    setEmployeeSourceDealership(null);
+                    setSelectedEmployeeId(null);
+                    setActiveTab('companies');
+                    setSelectedDealershipId(null);
+                  }}
+                  sourceDealership={employeeSourceDealership}
+                />
               )}
               {activeTab === 'audits' && !selectedAuditId && (
                 <Audits audits={audits} loading={auditsLoading} onOpenDetail={setSelectedAuditId} />
@@ -187,6 +248,7 @@ export function SuperAdminLayout({ summary, voice, loadingSummary, role, onRoleC
                   onBack={() => setSelectedAuditId(null)}
                   onNavigate={setSelectedAuditId}
                   onOpenEmployee={(empId) => {
+                    setEmployeeSourceDealership(null);
                     setSelectedAuditId(null);
                     setActiveTab('autodealers');
                     setSelectedEmployeeId(empId);

@@ -36,3 +36,13 @@ export function deltaDisplay(d: number | null): { text: string; cls: string } {
 export function statusBadgeClass(s: string): string {
   return `sa-status-badge sa-status-${s}`;
 }
+
+export function exportPageToPdf(fileName: string): void {
+  if (typeof window === 'undefined') return;
+  const previousTitle = document.title;
+  document.title = fileName;
+  window.print();
+  window.setTimeout(() => {
+    document.title = previousTitle;
+  }, 500);
+}

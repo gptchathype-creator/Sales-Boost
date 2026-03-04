@@ -16,7 +16,6 @@ const isDevHost =
   (window.location.hostname === 'localhost' ||
     window.location.hostname === '127.0.0.1' ||
     window.location.hostname.endsWith('.lhr.life'));
-const USE_MOCK = import.meta.env.VITE_USE_MOCK_DATA !== 'false';
 
 type Attempt = {
   id: number | string;
@@ -85,39 +84,6 @@ const mockStaffTrainings: Attempt[] = [
 ];
 
 const STAFF_WEB_HISTORY_STORAGE_KEY = 'staff_web_test_history_v1';
-const MOCK_AUDIO_DATA_URL = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAIlYAAESsAAACABAAZGF0YQAAAAA=';
-
-const MOCK_CLIENT_MESSAGES = [
-  'Здравствуйте! Я хотел бы узнать подробнее о вашем ассортименте автомобилей.',
-  'Ну, мне нужен надежный семейный автомобиль. Бюджет — около 3 миллионов.',
-  'А какие гарантии вы предоставляете? И есть ли сейчас акции?',
-  'Мне кажется, у конкурентов дешевле. Почему я должен купить у вас?',
-  'Хорошо, вы меня убедили. Как мне оформить покупку?',
-  'Спасибо за информацию. Мне нужно подумать. До свидания!',
-];
-
-function getMockClientResponse(turnIndex: number): { clientMessage: string; endConversation: boolean; result?: WebTestResult } {
-  if (turnIndex >= MOCK_CLIENT_MESSAGES.length - 1) {
-    return {
-      clientMessage: MOCK_CLIENT_MESSAGES[MOCK_CLIENT_MESSAGES.length - 1],
-      endConversation: true,
-      result: {
-        verdict: 'pass',
-        totalScore: 78,
-        qualityTag: 'Хорошо',
-        summary: 'Менеджер показал хорошие навыки общения. Приветствие и презентация на высоком уровне. Рекомендуется улучшить работу с возражениями по цене и технику закрытия сделки.',
-        strengths: ['Уверенное приветствие', 'Хорошая презентация продукта', 'Выявление потребностей клиента'],
-        weaknesses: ['Недостаточно убедительная работа с ценовыми возражениями', 'Не предложил конкретный следующий шаг'],
-        recommendations: ['Пройти тренировку по технике закрытия', 'Изучить конкурентные преимущества для аргументации цены'],
-        reasonCode: null,
-      },
-    };
-  }
-  return {
-    clientMessage: MOCK_CLIENT_MESSAGES[Math.min(turnIndex, MOCK_CLIENT_MESSAGES.length - 1)],
-    endConversation: false,
-  };
-}
 
 /* ================================================================
    Profile page (statistics)
@@ -130,7 +96,7 @@ export function StaffProfileContent() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    if (USE_MOCK && isDevHost) {
+    if (isDevHost) {
       setAttempts(mockStaffTrainings);
       setLoading(false);
       return () => { cancelled = true; };
@@ -490,8 +456,6 @@ function StaffTestScreen(props: { onBack: () => void; onSessionClosed?: (item: W
   const [mustListenClientMessageId, setMustListenClientMessageId] = useState<number | null>(null);
   const [heardClientMessageIds, setHeardClientMessageIds] = useState<number[]>([]);
   const [stopPlaybackSignal, setStopPlaybackSignal] = useState(0);
-  const [useMock, setUseMock] = useState(false);
-  const [mockTurnIndex, setMockTurnIndex] = useState(0);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
@@ -506,65 +470,37 @@ function StaffTestScreen(props: { onBack: () => void; onSessionClosed?: (item: W
     setError(null);
     setFinalResult(null);
     setMessages([{ id: 1, role: 'client', audioUrl: null, textFallback: '...' }]);
-    if (USE_MOCK && isDevHost) {
-      setUseMock(true);
-      setMockTurnIndex(1);
-      setSessionId(`mock_${Date.now().toString(36)}`);
-      setMessages([{
-        id: 1,
-        role: 'client',
-        audioUrl: MOCK_AUDIO_DATA_URL,
-        autoPlay: true,
-      }]);
-      setMustListenClientMessageId(1);
-      setStarted(true);
-      setSending(false);
-      return;
-    }
-
     try {
       const res = await fetch(`${API_BASE}/api/training/web/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ strictness: 'medium', profile: 'normal', replyMode: 'text+voice', voice: 'male' }),
       });
-      if (!res.ok) throw new Error(`Ошибка ${res.status}`);
       const data = await parseApiJson(res);
+      if (!res.ok) {
+        throw new Error(data.error || `Ошибка ${res.status}`);
+      }
       setSessionId(data.sessionId);
       setMessages([{
         id: 1,
         role: 'client',
-        audioUrl: data.audioBase64 ? `data:audio/ogg;base64,${data.audioBase64}` : MOCK_AUDIO_DATA_URL,
-        autoPlay: true,
+        audioUrl: data.audioBase64 ? `data:audio/ogg;base64,${data.audioBase64}` : null,
+        textFallback: data.clientMessage || 'Клиент подключён.',
+        autoPlay: Boolean(data.audioBase64),
       }]);
-      setMustListenClientMessageId(1);
+      setMustListenClientMessageId(data.audioBase64 ? 1 : null);
       setStarted(true);
       setEnded(data.endConversation ?? false);
       if (data.result && data.endConversation) {
         setFinalResult(data.result as WebTestResult);
       }
-    } catch {
-      if (isDevHost) {
-        setUseMock(true);
-        setMockTurnIndex(1);
-        setSessionId(`mock_${Date.now().toString(36)}`);
-        setMessages([{
-          id: 1,
-          role: 'client',
-          audioUrl: MOCK_AUDIO_DATA_URL,
-          autoPlay: true,
-        }]);
-        setMustListenClientMessageId(1);
-        setStarted(true);
-        setError(null);
-      } else {
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === 1 ? { ...m, textFallback: 'Не удалось запустить тест. Запустите бэкенд.' } : m,
-          ),
-        );
-        setError('Бэкенд недоступен');
-      }
+    } catch (e: any) {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === 1 ? { ...m, textFallback: 'Не удалось запустить тест. Попробуйте ещё раз.' } : m,
+        ),
+      );
+      setError(e?.message || 'Не удалось запустить тренировку');
     } finally {
       setSending(false);
     }
@@ -572,6 +508,7 @@ function StaffTestScreen(props: { onBack: () => void; onSessionClosed?: (item: W
 
   useEffect(() => {
     startTraining();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -606,7 +543,11 @@ function StaffTestScreen(props: { onBack: () => void; onSessionClosed?: (item: W
     try {
       return JSON.parse(raw);
     } catch {
-      throw new Error(`Сервер вернул не JSON (HTTP ${res.status})`);
+      throw new Error(
+        res.status === 503
+          ? 'Сервер временно недоступен (HTTP 503). Повторите отправку через несколько секунд.'
+          : `Сервер вернул не JSON (HTTP ${res.status}). Проверьте, что backend запущен и /api проксируется на него.`,
+      );
     }
   };
 
@@ -621,33 +562,6 @@ function StaffTestScreen(props: { onBack: () => void; onSessionClosed?: (item: W
     ]);
     setSending(true);
     setError(null);
-
-    if (useMock) {
-      setTimeout(() => {
-        const resp = getMockClientResponse(mockTurnIndex);
-        setMockTurnIndex((prev) => prev + 1);
-        setMessages((prev) => {
-          const copy = [...prev];
-          const lastIdx = copy.findIndex((m) => m.id === idBase + 1);
-          if (lastIdx >= 0) {
-            copy[lastIdx] = {
-              id: idBase + 1,
-              role: 'client',
-              audioUrl: MOCK_AUDIO_DATA_URL,
-              autoPlay: true,
-            };
-          }
-          return copy;
-        });
-        setMustListenClientMessageId(idBase + 1);
-        setEnded(resp.endConversation);
-        if (resp.endConversation && resp.result) {
-          setFinalResult(resp.result);
-        }
-        setSending(false);
-      }, 800 + Math.random() * 700);
-      return;
-    }
 
     try {
       const audioBase64 = await blobToBase64(blob);
@@ -677,13 +591,14 @@ function StaffTestScreen(props: { onBack: () => void; onSessionClosed?: (item: W
           copy[lastIdx] = {
             id: idBase + 1,
             role: 'client',
-            audioUrl: data.audioBase64 ? `data:audio/ogg;base64,${data.audioBase64}` : MOCK_AUDIO_DATA_URL,
-            autoPlay: true,
+            audioUrl: data.audioBase64 ? `data:audio/ogg;base64,${data.audioBase64}` : null,
+            textFallback: data.clientMessage || 'Ответ получен',
+            autoPlay: Boolean(data.audioBase64),
           };
         }
         return copy;
       });
-      setMustListenClientMessageId(idBase + 1);
+      setMustListenClientMessageId(data.audioBase64 ? idBase + 1 : null);
       setEnded(data.endConversation ?? false);
       if (data.result && data.endConversation) {
         setFinalResult(data.result as WebTestResult);
@@ -696,14 +611,13 @@ function StaffTestScreen(props: { onBack: () => void; onSessionClosed?: (item: W
           copy[lastIdx] = {
             id: idBase + 1,
             role: 'client',
-            audioUrl: MOCK_AUDIO_DATA_URL,
-            autoPlay: true,
+            audioUrl: null,
+            textFallback: 'Сервер временно недоступен. Повторите голосовое сообщение.',
           };
         }
         return copy;
       });
-      setMustListenClientMessageId(idBase + 1);
-      setError(useMock ? null : (e?.message || 'Сервер временно недоступен'));
+      setError(e?.message || 'Сервер временно недоступен');
     } finally {
       setSending(false);
     }
@@ -818,9 +732,13 @@ function StaffTestScreen(props: { onBack: () => void; onSessionClosed?: (item: W
   if (ended && finalResult) {
     return (
       <div className="space-y-4">
-        <Button size="sm" variant="flat" onPress={() => closeSessionAndExit(false)} startContent={<span>←</span>}>
-          Назад
-        </Button>
+        <div className="flex items-center justify-between">
+          <Button size="sm" variant="flat" onPress={() => closeSessionAndExit(false)}>
+            ← Назад
+          </Button>
+          <div className="text-sm font-semibold">Тестирование завершено</div>
+          <div />
+        </div>
         <Card shadow="sm" className="admin-card-light">
           <CardBody className="space-y-4">
             <div className="flex justify-between items-start">
@@ -860,35 +778,43 @@ function StaffTestScreen(props: { onBack: () => void; onSessionClosed?: (item: W
   }
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <Button size="sm" variant="flat" onPress={handleBackPress} startContent={<span>←</span>}>
-          Назад
+    <div className="flex flex-col h-[calc(100vh-170px)] min-h-[520px]" style={{ color: 'var(--text-body)' }}>
+      <div className="flex items-center justify-between gap-2">
+        <Button size="sm" variant="flat" onPress={handleBackPress}>
+          ← Назад
         </Button>
         <div className="text-sm font-semibold">Тест с виртуальным клиентом</div>
         <div className="text-[11px] text-default-500">
-          {ended ? 'Завершён' : started ? 'Идёт' : 'Запуск…'}
+          {ended ? 'Диалог завершён' : started ? 'Тренировка идёт' : 'Запуск...'}
         </div>
       </div>
-
-      {useMock && (
-        <div className="text-[11px] text-amber-400 bg-amber-500/10 rounded-lg px-3 py-2">
-          Демо-режим: бэкенд недоступен. Диалог ведётся с мок-клиентом.
-        </div>
-      )}
-
-      <Card shadow="sm" className="admin-card-light" style={{ minHeight: 300 }}>
-        <CardBody className="space-y-2">
+      <Card shadow="sm" className="admin-card-light flex-1 min-h-0">
+        <CardBody className="space-y-2 text-xs h-full overflow-y-auto">
           {messages.length === 0 && (
-            <div className="text-[11px] text-default-500">Ожидаем первое сообщение от клиента…</div>
+            <div className="text-[11px] text-default-500">
+              Ожидаем первое сообщение от клиента…
+            </div>
           )}
           {messages.map((m) => (
-            <div key={m.id} className={`flex ${m.role === 'manager' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-[85%] rounded-2xl px-3 py-2 ${
-                m.role === 'manager'
-                  ? 'bg-primary-600 text-white rounded-br-sm'
-                  : 'bg-default-200/80 border border-default-300 text-default-800 rounded-bl-sm'
-              }`}>
+            <div
+              key={m.id}
+              className={`flex ${m.role === 'manager' ? 'justify-end' : 'justify-start'}`}
+            >
+              <div
+                className={`max-w-[86%] rounded-2xl px-3 py-2 ${
+                  m.role === 'manager'
+                    ? 'rounded-br-sm'
+                    : 'rounded-bl-sm border border-default-300 text-default-800'
+                }`}
+                style={m.role === 'manager'
+                  ? {
+                      background: 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)',
+                      color: '#ffffff',
+                      boxShadow: '0 4px 14px rgba(79, 70, 229, 0.25)',
+                    }
+                  : { background: 'rgba(243, 244, 246, 0.96)' }
+                }
+              >
                 {m.audioUrl ? (
                   <VoiceBubble
                     messageId={m.id}
@@ -906,15 +832,14 @@ function StaffTestScreen(props: { onBack: () => void; onSessionClosed?: (item: W
                 ) : m.role === 'client' && m.textFallback === '...' ? (
                   <ClientThinkingBubble />
                 ) : (
-                  <div className="text-[12px]">{m.textFallback || 'Голос недоступен'}</div>
+                  <div className="text-[11px] opacity-80">{m.textFallback || 'Голос недоступен'}</div>
                 )}
               </div>
             </div>
           ))}
         </CardBody>
       </Card>
-
-      <div className="space-y-2">
+      <div className="sticky bottom-0 mt-2 border-t backdrop-blur px-3 md:px-6 pt-3 pb-[calc(env(safe-area-inset-bottom)+12px)] rounded-2xl" style={{ borderColor: 'var(--block-border)', background: 'var(--card-bg)' }}>
         <div className="flex justify-center items-center min-h-[72px]">
           <div className="relative">
             {recording && (
@@ -942,12 +867,16 @@ function StaffTestScreen(props: { onBack: () => void; onSessionClosed?: (item: W
               variant="solid"
               isDisabled={!sessionId || sending || ended || requiresListening}
               onPress={toggleRecording}
-              className="w-14 h-14 relative z-10"
+              className="w-16 h-16 md:w-20 md:h-20 relative z-10 text-white"
             >
               {recording ? (
                 <span className="text-lg leading-none">■</span>
               ) : (
-                <svg viewBox="0 0 24 24" aria-hidden="true" className="w-6 h-6 fill-current">
+                <svg
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                  className="w-7 h-7 md:w-8 md:h-8 fill-current"
+                >
                   <path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 1 0 6 0V6a3 3 0 0 0-3-3z" />
                   <path d="M18 11a1 1 0 1 0-2 0 4 4 0 1 1-8 0 1 1 0 1 0-2 0 6 6 0 0 0 5 5.91V20H9a1 1 0 1 0 0 2h6a1 1 0 1 0 0-2h-2v-3.09A6 6 0 0 0 18 11z" />
                 </svg>
@@ -959,10 +888,14 @@ function StaffTestScreen(props: { onBack: () => void; onSessionClosed?: (item: W
         {error && <div className="text-[11px] text-danger-400 text-center">{error}</div>}
         {recording && <div className="text-[11px] text-warning-400 text-center">Идёт запись… нажмите ещё раз, чтобы отправить</div>}
         {!recording && requiresListening && (
-          <div className="text-[11px] text-default-500 text-center">Дослушайте сообщение клиента до конца.</div>
+          <div className="text-[11px] text-default-500 text-center">
+            Сначала дослушайте голосовое клиента до конца, затем запись разблокируется.
+          </div>
         )}
-        {ended && !finalResult && (
-          <div className="text-[11px] text-success-400 text-center">Диалог завершён.</div>
+        {ended && (
+          <div className="text-[11px] text-success-400 text-center">
+            Диалог завершён. Вы можете запустить новый тест.
+          </div>
         )}
       </div>
 
@@ -1082,7 +1015,7 @@ function VoiceBubble(props: {
         {bars.map((h, idx) => {
           const played = idx / bars.length < progress;
           return (
-            <div key={idx} className={`w-[2px] rounded-full ${played ? (side === 'manager' ? 'bg-white' : 'bg-sky-200') : (side === 'manager' ? 'bg-white/35' : 'bg-default-400/40')} ${playing ? 'transition-all duration-150' : ''}`}
+            <div key={idx} className={`w-[2px] rounded-full ${played ? (side === 'manager' ? 'bg-white' : 'bg-zinc-700') : (side === 'manager' ? 'bg-white/35' : 'bg-zinc-400/70')} ${playing ? 'transition-all duration-150' : ''}`}
               style={{ height: `${8 + h * 10}px` }} />
           );
         })}
@@ -1100,7 +1033,7 @@ function ClientThinkingBubble() {
       <div className="text-[11px] mb-1">Клиент записывает голосовое…</div>
       <div className="flex items-end gap-[2px] h-4">
         {Array.from({ length: 20 }).map((_, idx) => (
-          <span key={idx} className="w-[2px] rounded-full bg-sky-200/70 animate-pulse"
+          <span key={idx} className="w-[2px] rounded-full bg-zinc-500/70 animate-pulse"
             style={{ height: `${6 + ((idx * 7) % 8)}px`, animationDelay: `${idx * 70}ms`, animationDuration: '900ms' }} />
         ))}
       </div>

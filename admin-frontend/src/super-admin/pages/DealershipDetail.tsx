@@ -4,13 +4,14 @@ import {
   STATUS_LABELS,
   type DealershipDetail as Detail,
 } from '../mockData';
-import { ratingClass, answerRateClass, answerTimeClass, statusBadgeClass } from '../utils';
+import { ratingClass, answerRateClass, answerTimeClass, statusBadgeClass, exportPageToPdf } from '../utils';
 
 /* ────────────────────── Props ────────────────────── */
 
 type Props = {
   dealershipId: string;
   onBack: () => void;
+  onOpenEmployee?: (id: string) => void;
 };
 
 /* ────────────────────── KPI Card ────────────────────── */
@@ -127,8 +128,7 @@ function Heatmap({ hourly }: { hourly: number[] }) {
 
 /* ────────────────────── Employees table ────────────────────── */
 
-function EmployeesTable({ employees }: { employees: Detail['employees'] }) {
-  const [modalEmployee, setModalEmployee] = useState<string | null>(null);
+function EmployeesTable({ employees, onOpenEmployee }: { employees: Detail['employees']; onOpenEmployee?: (id: string) => void }) {
   if (employees.length === 0) return <div className="sa-meta" style={{ padding: 24, textAlign: 'center' }}>Нет данных о сотрудниках</div>;
   return (
     <>
@@ -145,7 +145,14 @@ function EmployeesTable({ employees }: { employees: Detail['employees'] }) {
           </thead>
           <tbody>
             {employees.map((e) => (
-              <tr key={e.id} className="sa-row-clickable" onClick={() => setModalEmployee(e.name)} role="button" tabIndex={0}>
+              <tr
+                key={e.id}
+                className="sa-row-clickable"
+                onClick={() => onOpenEmployee?.(e.id)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(ev) => ev.key === 'Enter' && onOpenEmployee?.(e.id)}
+              >
                 <td style={{ fontWeight: 600 }}>{e.name}</td>
                 <td className="sa-text-right"><span className={ratingClass(e.aiRating)}>{e.aiRating}</span></td>
                 <td className="sa-text-right">{e.auditsCount}</td>
@@ -160,15 +167,6 @@ function EmployeesTable({ employees }: { employees: Detail['employees'] }) {
           </tbody>
         </table>
       </div>
-      {modalEmployee && (
-        <div className="sa-modal-overlay" onClick={() => setModalEmployee(null)}>
-          <div className="sa-modal" onClick={(e) => e.stopPropagation()}>
-            <h3 style={{ margin: '0 0 8px' }}>{modalEmployee}</h3>
-            <p className="sa-meta">Детальная страница сотрудника — скоро</p>
-            <button className="sa-btn-outline" style={{ marginTop: 12 }} onClick={() => setModalEmployee(null)}>Закрыть</button>
-          </div>
-        </div>
-      )}
     </>
   );
 }
@@ -250,7 +248,7 @@ function AuditHistory({ audits }: { audits: Detail['audits'] }) {
 
 /* ────────────────────── Main Component ────────────────────── */
 
-export function DealershipDetail({ dealershipId, onBack }: Props) {
+export function DealershipDetail({ dealershipId, onBack, onOpenEmployee }: Props) {
   const detail = useMemo(() => getMockDealershipDetail(dealershipId), [dealershipId]);
 
   if (!detail) {
@@ -285,7 +283,7 @@ export function DealershipDetail({ dealershipId, onBack }: Props) {
         </div>
         <div className="sa-detail-header-right">
           <span className={statusBadgeClass(detail.status)}>{STATUS_LABELS[detail.status]}</span>
-          <button className="sa-btn-outline" disabled title="Скоро">Экспорт PDF</button>
+          <button className="sa-btn-outline" onClick={() => exportPageToPdf(`Автосалон_${detail.name}`)}>Экспорт PDF</button>
         </div>
       </div>
 
@@ -321,7 +319,7 @@ export function DealershipDetail({ dealershipId, onBack }: Props) {
       {/* Employees */}
       <section className="sa-section" style={{ marginBottom: 32 }}>
         <h2 className="sa-section-title">Сотрудники</h2>
-        <EmployeesTable employees={detail.employees} />
+        <EmployeesTable employees={detail.employees} onOpenEmployee={onOpenEmployee} />
       </section>
 
       {/* Insights */}

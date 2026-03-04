@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import type { PlatformSummary } from '../types';
 import type { TimeSeriesPoint } from '../api';
-import { ratingClass } from '../utils';
+import { ratingClass, exportPageToPdf } from '../utils';
 import {
   computeAnalyticsSummary,
   type KeyInsight,
@@ -239,7 +239,7 @@ export function Analytics({ summary, timeSeries = [], loading = false, onDrill }
                   {act.drillType === 'audits' && (
                     <button className="sa-btn-text sa-btn-sm" onClick={() => onDrill?.('audits', act.drillFilter)}>Открыть проверки →</button>
                   )}
-                  <button className="sa-btn-outline sa-btn-sm" disabled title="Скоро">Экспорт отчёт</button>
+                  <button className="sa-btn-outline sa-btn-sm" onClick={() => exportPageToPdf('Аналитика_отчет')}>Экспорт отчёт</button>
                 </div>
               </div>
             ))}

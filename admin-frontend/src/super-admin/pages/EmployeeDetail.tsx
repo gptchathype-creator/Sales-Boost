@@ -6,9 +6,15 @@ import {
   COMM_BADGE_CLASS,
   type EmployeeDetailData,
 } from '../mockData';
-import { ratingClass, deltaDisplay, statusBadgeClass } from '../utils';
+import { ratingClass, deltaDisplay, statusBadgeClass, exportPageToPdf } from '../utils';
 
-type Props = { employeeId: string; onBack: () => void };
+type Props = {
+  employeeId: string;
+  onBack: () => void;
+  onOpenDealership?: (id: string) => void;
+  onOpenCompanies?: () => void;
+  sourceDealership?: { id: string; name: string } | null;
+};
 
 /* ────────────────────── KPI Card ────────────────────── */
 
@@ -224,7 +230,7 @@ function AuditHistory({ audits }: { audits: EmployeeDetailData['audits'] }) {
 
 /* ════════════════════ Main component ════════════════════ */
 
-export function EmployeeDetail({ employeeId, onBack }: Props) {
+export function EmployeeDetail({ employeeId, onBack, onOpenDealership, onOpenCompanies, sourceDealership }: Props) {
   const detail = useMemo(() => getMockEmployeeDetail(employeeId), [employeeId]);
 
   if (!detail) {
@@ -243,20 +249,42 @@ export function EmployeeDetail({ employeeId, onBack }: Props) {
     <div className="sa-detail-root">
       {/* Breadcrumb */}
       <div className="sa-breadcrumb">
-        <button className="sa-btn-text" onClick={onBack}>Сотрудники</button>
-        <span className="sa-breadcrumb-sep">→</span>
-        <span>{detail.fullName}</span>
+        {sourceDealership ? (
+          <>
+            <button className="sa-btn-text" onClick={() => onOpenCompanies?.()}>Автосалоны</button>
+            <span className="sa-breadcrumb-sep">→</span>
+            <button className="sa-btn-text" onClick={() => onOpenDealership?.(sourceDealership.id)}>{sourceDealership.name}</button>
+            <span className="sa-breadcrumb-sep">→</span>
+            <span>{detail.fullName}</span>
+          </>
+        ) : (
+          <>
+            <button className="sa-btn-text" onClick={onBack}>Сотрудники</button>
+            <span className="sa-breadcrumb-sep">→</span>
+            <span>{detail.fullName}</span>
+          </>
+        )}
       </div>
 
       {/* Header */}
       <div className="sa-detail-header">
         <div>
           <h1 className="sa-page-title" style={{ marginBottom: 4 }}>{detail.fullName}</h1>
-          <p className="sa-page-subtitle" style={{ marginBottom: 0 }}>{detail.dealershipName} · {detail.city}</p>
+          <p className="sa-page-subtitle" style={{ marginBottom: 0 }}>
+            <button
+              className="sa-btn-text"
+              style={{ padding: 0, fontSize: 'inherit', lineHeight: 'inherit' }}
+              onClick={() => onOpenDealership?.(detail.dealershipId)}
+            >
+              {detail.dealershipName}
+            </button>
+            {' · '}
+            {detail.city}
+          </p>
         </div>
         <div className="sa-detail-header-right">
           <span className={statusBadgeClass(detail.status)}>{STATUS_LABELS[detail.status]}</span>
-          <button className="sa-btn-outline" disabled title="Скоро">Экспорт PDF</button>
+          <button className="sa-btn-outline" onClick={() => exportPageToPdf(`Сотрудник_${detail.fullName}`)}>Экспорт PDF</button>
         </div>
       </div>
 
