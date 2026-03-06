@@ -132,9 +132,10 @@ type Props = {
   onTab: (tab: SuperAdminTab) => void;
   role: AdminRole;
   onRoleChange: (role: AdminRole) => void;
+  hasActiveBatch?: boolean;
 };
 
-export function SuperAdminSidebar({ activeTab, onTab, role, onRoleChange }: Props) {
+export function SuperAdminSidebar({ activeTab, onTab, role, onRoleChange, hasActiveBatch = false }: Props) {
   const [profileOpen, setProfileOpen] = useState(false);
   const profileRef = useRef<HTMLDivElement>(null);
 
@@ -200,7 +201,10 @@ export function SuperAdminSidebar({ activeTab, onTab, role, onRoleChange }: Prop
             <span style={{ flexShrink: 0, opacity: activeTab === item.id ? 1 : 0.7 }}>
               {item.icon}
             </span>
-            <span>{item.label}</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              {item.label}
+              {item.id === 'audits' && hasActiveBatch && <span className="sa-batch-tray-dot" />}
+            </span>
           </button>
         ))}
       </nav>

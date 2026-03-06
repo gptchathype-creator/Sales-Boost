@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import type { MockCompany } from '../api';
 import {
   adaptCompaniesToRows,
@@ -9,6 +9,14 @@ import {
   getAllCities,
 } from '../mockData';
 import { ratingClass, answerRateClass, answerTimeClass, deltaDisplay, statusBadgeClass } from '../utils';
+import {
+  ACTIVE_BATCH_STORAGE_KEY,
+  fetchBatchWithSummary,
+  type CallBatchSnapshot,
+  type DealershipBatchSummary,
+} from '../batchUtils';
+
+const API_BASE = '';
 
 /* ────────────────────── Props ────────────────────── */
 
@@ -16,6 +24,7 @@ type CompaniesProps = {
   companies: MockCompany[];
   loading?: boolean;
   onSelectDealership?: (id: string) => void;
+  onOpenBatchInAudits?: (batchId: string) => void;
 };
 
 /* ────────────────────── Sort config ────────────────────── */
@@ -56,7 +65,7 @@ type Period = '7d' | '30d' | 'custom';
 
 /* ────────────────────── Component ────────────────────── */
 
-export function Companies({ companies, loading = false, onSelectDealership }: CompaniesProps) {
+export function Companies({ companies, loading = false, onSelectDealership, onOpenBatchInAudits }: CompaniesProps) {
   const rows = useMemo(() => adaptCompaniesToRows(companies), [companies]);
   const allCities = useMemo(() => getAllCities(), []);
 
@@ -69,6 +78,14 @@ export function Companies({ companies, loading = false, onSelectDealership }: Co
   const [cityFilter, setCityFilter] = useState<string[]>([]);
   const [statusFilter, setStatusFilter] = useState<DealershipStatus[]>([]);
   const [showFilters, setShowFilters] = useState(false);
+  const [startingBatch, setStartingBatch] = useState(false);
+  const [batchError, setBatchError] = useState<string | null>(null);
+  const [batchNotice, setBatchNotice] = useState<string | null>(null);
+  const [activeBatchId, setActiveBatchId] = useState<string | null>(null);
+  const [activeBatch, setActiveBatch] = useState<CallBatchSnapshot | null>(null);
+  const [dealershipSummary, setDealershipSummary] = useState<Record<string, DealershipBatchSummary>>({});
+
+  const hasActiveManual = !!activeBatch && (activeBatch.status === 'running' || activeBatch.status === 'paused');
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -113,6 +130,178 @@ export function Companies({ companies, loading = false, onSelectDealership }: Co
     return <span className="sa-sort-icon">{sortDir === 'asc' ? '↑' : '↓'}</span>;
   };
 
+  async function fetchTestNumbers(): Promise<string[]> {
+    const res = await fetch(`${API_BASE}/api/admin/test-numbers`);
+    if (!res.ok) throw new Error('Не удалось получить тестовые номера');
+    const data = await res.json().catch(() => ({}));
+    const nums = Array.isArray(data?.numbers) ? data.numbers.map((x: unknown) => String(x)) : [];
+    return nums.filter((n: string) => n.trim().length > 0);
+  }
+
+  async function refreshBatch(batchId: string): Promise<void> {
+    const data = await fetchBatchWithSummary(batchId);
+    if (!data || !data.batch) {
+      setActiveBatchId(null);
+      setActiveBatch(null);
+      setDealershipSummary({});
+      return;
+    }
+    setActiveBatch(data.batch);
+    const raw = Array.isArray(data.dealershipSummary) ? (data.dealershipSummary as DealershipBatchSummary[]) : [];
+    const mapped: Record<string, DealershipBatchSummary> = {};
+    for (const item of raw) {
+      if (item.dealershipId) mapped[item.dealershipId] = item;
+    }
+    setDealershipSummary(mapped);
+  }
+
+  const handleDismissBatchPanel = () => {
+    setActiveBatchId(null);
+    setActiveBatch(null);
+    setDealershipSummary({});
+    setBatchError(null);
+    setBatchNotice(null);
+    try {
+      localStorage.removeItem(ACTIVE_BATCH_STORAGE_KEY);
+    } catch {
+      // ignore
+    }
+  };
+
+  useEffect(() => {
+    try {
+      const remembered = localStorage.getItem(ACTIVE_BATCH_STORAGE_KEY);
+      if (remembered && remembered.trim()) {
+        setActiveBatchId(remembered.trim());
+      }
+    } catch {
+      // ignore localStorage errors
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!activeBatchId) return;
+    let stopped = false;
+    const poll = async () => {
+      if (stopped) return;
+      await refreshBatch(activeBatchId);
+      if (stopped) return;
+      const isFinal = activeBatch?.status === 'completed' || activeBatch?.status === 'cancelled';
+      if (!isFinal) {
+        window.setTimeout(poll, 1500);
+      }
+    };
+    poll();
+    return () => { stopped = true; };
+  }, [activeBatchId, activeBatch?.status]);
+
+  async function handleStartAllChecks() {
+    setBatchError(null);
+    setBatchNotice(null);
+    setStartingBatch(true);
+    try {
+      const targets = filtered.length > 0 ? filtered : rows;
+      if (targets.length === 0) {
+        throw new Error('Нет автосалонов для запуска проверки');
+      }
+      const numbers = await fetchTestNumbers();
+      if (numbers.length === 0) {
+        throw new Error('Добавьте VOX_TEST_TO или VOX_TEST_NUMBERS в .env');
+      }
+      const jobs = targets.map((d, idx) => ({
+        dealershipId: d.id,
+        dealershipName: d.name,
+        phone: numbers[idx % numbers.length],
+      }));
+      const res = await fetch(`${API_BASE}/api/admin/call-batches`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'all_dealerships',
+          title: `Проверка сети (${jobs.length})`,
+          maxConcurrency: 10,
+          startIntervalMs: 350,
+          maxAttempts: 3,
+          jobs,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || 'Не удалось запустить батч');
+      const batchId = String(data.batchId || '');
+      if (!batchId) throw new Error('Сервер не вернул batchId');
+      setActiveBatchId(batchId);
+      try { localStorage.setItem(ACTIVE_BATCH_STORAGE_KEY, batchId); } catch {}
+      setBatchNotice(`Проверка запущена: ${jobs.length} задач`);
+      await refreshBatch(batchId);
+    } catch (e: unknown) {
+      let message = e instanceof Error ? e.message : 'Ошибка запуска проверки';
+      if (message.includes('Уже есть активная ручная проверка')) {
+        setBatchNotice('Уже есть активная ручная проверка. Управляйте ею в трее проверок в правом нижнем углу.');
+      } else {
+        setBatchError(message);
+      }
+    } finally {
+      setStartingBatch(false);
+    }
+  }
+
+  async function handleStartLocalTest() {
+    setBatchError(null);
+    setBatchNotice(null);
+    setStartingBatch(true);
+    try {
+      const targets = (filtered.length > 0 ? filtered : rows).slice(0, 12);
+      if (targets.length === 0) throw new Error('Нет автосалонов для тестового прогона');
+      const jobs = targets.map((d) => ({
+        dealershipId: d.id,
+        dealershipName: d.name,
+        phone: '',
+      }));
+      const res = await fetch(`${API_BASE}/api/admin/call-batches`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'manual',
+          title: `Тестовый прогон (${jobs.length})`,
+          maxConcurrency: 6,
+          startIntervalMs: 250,
+          maxAttempts: 2,
+          testMode: true,
+          jobs,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || 'Не удалось запустить тестовый прогон');
+      const batchId = String(data.batchId || '');
+      if (!batchId) throw new Error('Сервер не вернул batchId');
+      setActiveBatchId(batchId);
+      try { localStorage.setItem(ACTIVE_BATCH_STORAGE_KEY, batchId); } catch {}
+      setBatchNotice(`Тестовый прогон запущен: ${jobs.length} задач (без реальных звонков)`);
+      await refreshBatch(batchId);
+    } catch (e: unknown) {
+      let message = e instanceof Error ? e.message : 'Ошибка тестового прогона';
+      if (message.includes('Уже есть активная ручная проверка')) {
+        setBatchNotice('Уже есть активная ручная проверка. Управляйте ею в трее проверок в правом нижнем углу.');
+      } else {
+        setBatchError(message);
+      }
+    } finally {
+      setStartingBatch(false);
+    }
+  }
+
+  async function setBatchMode(action: 'pause' | 'resume' | 'cancel') {
+    if (!activeBatchId) return;
+    setBatchError(null);
+    const res = await fetch(`${API_BASE}/api/admin/call-batches/${activeBatchId}/${action}`, { method: 'POST' });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setBatchError(data?.error || `Не удалось выполнить ${action}`);
+      return;
+    }
+    await refreshBatch(activeBatchId);
+  }
+
   return (
     <>
       <h1 className="sa-page-title">Автосалоны</h1>
@@ -143,6 +332,23 @@ export function Companies({ companies, loading = false, onSelectDealership }: Co
             </svg>
             Фильтры
           </button>
+          <button
+            className="sa-btn-danger"
+            onClick={handleStartAllChecks}
+            disabled={startingBatch || hasActiveManual}
+            title={hasActiveManual ? 'Уже есть активная ручная проверка — управляйте ею в трее проверок.' : undefined}
+          >
+            <span className="sa-btn-danger-dot" />
+            {startingBatch ? 'Запуск...' : 'Проверить все автосалоны'}
+          </button>
+          <button
+            className="sa-btn-outline"
+            onClick={handleStartLocalTest}
+            disabled={startingBatch || hasActiveManual}
+            title={hasActiveManual ? 'Уже есть активная ручная проверка — управляйте ею в трее проверок.' : undefined}
+          >
+            Тестовый прогон (без звонков)
+          </button>
         </div>
         <div className="sa-toolbar-chips">
           <button
@@ -159,6 +365,17 @@ export function Companies({ companies, loading = false, onSelectDealership }: Co
           </button>
         </div>
       </div>
+
+      {batchNotice && (
+        <div className="sa-batch-live-note" style={{ marginBottom: 8 }}>
+          {batchNotice}
+        </div>
+      )}
+      {batchError && (
+        <div className="sa-batch-live-error" style={{ marginBottom: 8 }}>
+          {batchError}
+        </div>
+      )}
 
       {/* ─── Filters panel (collapsible) ─── */}
       {showFilters && (
@@ -226,6 +443,11 @@ export function Companies({ companies, loading = false, onSelectDealership }: Co
                     <td>
                       <div className="sa-cell-name">{r.name}</div>
                       <div className="sa-cell-city">{r.city}</div>
+                      {dealershipSummary[r.id] && (
+                        <div className="sa-inline-batch-status">
+                          {dealershipSummary[r.id].completed}/{dealershipSummary[r.id].total} · {dealershipSummary[r.id].status === 'in_progress' ? 'в работе' : dealershipSummary[r.id].status === 'completed' ? 'готово' : dealershipSummary[r.id].status === 'failed' ? 'ошибка' : dealershipSummary[r.id].status === 'partial' ? 'частично' : dealershipSummary[r.id].status === 'cancelled' ? 'отменено' : 'в очереди'}
+                        </div>
+                      )}
                     </td>
                     <td className="sa-text-right"><span className={ratingClass(r.aiRating)}>{r.aiRating}</span></td>
                     <td className="sa-text-right">

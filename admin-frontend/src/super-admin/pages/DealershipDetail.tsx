@@ -1,10 +1,16 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   getMockDealershipDetail,
   STATUS_LABELS,
   type DealershipDetail as Detail,
 } from '../mockData';
 import { ratingClass, answerRateClass, answerTimeClass, statusBadgeClass, exportPageToPdf } from '../utils';
+import {
+  ACTIVE_BATCH_STORAGE_KEY,
+  fetchBatchWithSummary,
+  type CallBatchSnapshot,
+  type DealershipBatchSummary,
+} from '../batchUtils';
 
 /* ────────────────────── Props ────────────────────── */
 
@@ -12,6 +18,7 @@ type Props = {
   dealershipId: string;
   onBack: () => void;
   onOpenEmployee?: (id: string) => void;
+  onOpenBatchDetail?: (batchId: string) => void;
 };
 
 /* ────────────────────── KPI Card ────────────────────── */
@@ -248,8 +255,14 @@ function AuditHistory({ audits }: { audits: Detail['audits'] }) {
 
 /* ────────────────────── Main Component ────────────────────── */
 
-export function DealershipDetail({ dealershipId, onBack, onOpenEmployee }: Props) {
+export function DealershipDetail({ dealershipId, onBack, onOpenEmployee, onOpenBatchDetail }: Props) {
   const detail = useMemo(() => getMockDealershipDetail(dealershipId), [dealershipId]);
+  const [checkLoading, setCheckLoading] = useState(false);
+  const [checkStatus, setCheckStatus] = useState<string | null>(null);
+  const [activeBatchId, setActiveBatchId] = useState<string | null>(null);
+  const [activeBatch, setActiveBatch] = useState<CallBatchSnapshot | null>(null);
+  const [batchSummary, setBatchSummary] = useState<DealershipBatchSummary | null>(null);
+  const hasActiveManual = !!activeBatch && (activeBatch.status === 'running' || activeBatch.status === 'paused');
 
   if (!detail) {
     return (
@@ -265,6 +278,97 @@ export function DealershipDetail({ dealershipId, onBack, onOpenEmployee }: Props
   const deltaCls = detail.deltaRating !== null
     ? detail.deltaRating > 0 ? 'sa-score-green' : detail.deltaRating < -5 ? 'sa-score-red' : 'sa-score-orange'
     : '';
+
+  function segmentWidth(count: number, total: number): string {
+    if (total <= 0 || count <= 0) return '0%';
+    return `${Math.max(3, (count / total) * 100)}%`;
+  }
+
+  useEffect(() => {
+    try {
+      const remembered = localStorage.getItem(ACTIVE_BATCH_STORAGE_KEY);
+      if (remembered && remembered.trim()) {
+        setActiveBatchId(remembered.trim());
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!activeBatchId) return;
+    let cancelled = false;
+    const poll = async () => {
+      if (cancelled) return;
+      const data = await fetchBatchWithSummary(activeBatchId);
+      if (!data || !data.batch) {
+        if (!cancelled) {
+          setActiveBatchId(null);
+          setActiveBatch(null);
+          setBatchSummary(null);
+        }
+        return;
+      }
+      if (cancelled) return;
+      setActiveBatch(data.batch);
+      const entry = (data.dealershipSummary || []).find(
+        (d) => d.dealershipId === detail.id || (!d.dealershipId && d.dealershipName === detail.name),
+      ) || null;
+      setBatchSummary(entry);
+      const isFinal = data.batch.status === 'completed' || data.batch.status === 'cancelled';
+      if (!isFinal) {
+        window.setTimeout(poll, 2000);
+      }
+    };
+    poll();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeBatchId, detail.id, detail.name]);
+
+  async function handleDealershipCheck() {
+    setCheckLoading(true);
+    setCheckStatus(null);
+    try {
+      const numsRes = await fetch('/api/admin/test-numbers');
+      const numsData = await numsRes.json().catch(() => ({}));
+      const numbers = Array.isArray(numsData?.numbers) ? numsData.numbers.map((x: unknown) => String(x)).filter((x: string) => x.trim()) : [];
+      if (!numbers.length) {
+        throw new Error('Нет тестовых номеров. Добавьте VOX_TEST_TO или VOX_TEST_NUMBERS');
+      }
+      const res = await fetch('/api/admin/call-batches', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'single_dealership',
+          title: `Проверка салона ${detail.name}`,
+          maxConcurrency: 1,
+          startIntervalMs: 250,
+          maxAttempts: 3,
+          jobs: [{
+            dealershipId: detail.id,
+            dealershipName: detail.name,
+            phone: numbers[0],
+          }],
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || 'Не удалось запустить проверку');
+      const batchId = String(data.batchId || '');
+      if (!batchId) throw new Error('Сервер не вернул batchId');
+      setCheckStatus('Проверка запущена');
+      setActiveBatchId(batchId);
+      try { localStorage.setItem(ACTIVE_BATCH_STORAGE_KEY, batchId); } catch {}
+    } catch (e: unknown) {
+      let message = e instanceof Error ? e.message : 'Ошибка запуска проверки';
+      if (message.includes('Уже есть активная ручная проверка')) {
+        message = 'Уже есть активная ручная проверка. Управляйте ею в трее проверок в правом нижнем углу.';
+      }
+      setCheckStatus(message);
+    } finally {
+      setCheckLoading(false);
+    }
+  }
 
   return (
     <div className="sa-detail-root">
@@ -283,9 +387,24 @@ export function DealershipDetail({ dealershipId, onBack, onOpenEmployee }: Props
         </div>
         <div className="sa-detail-header-right">
           <span className={statusBadgeClass(detail.status)}>{STATUS_LABELS[detail.status]}</span>
+          <button
+            className="sa-btn-danger"
+            onClick={handleDealershipCheck}
+            disabled={checkLoading || hasActiveManual}
+            title={hasActiveManual ? 'Уже есть активная ручная проверка — управляйте ею в трее проверок.' : undefined}
+          >
+            <span className="sa-btn-danger-dot" />
+            {checkLoading ? 'Запуск...' : 'Проверить автосалон'}
+          </button>
           <button className="sa-btn-outline" onClick={() => exportPageToPdf(`Автосалон_${detail.name}`)}>Экспорт PDF</button>
         </div>
       </div>
+      {checkStatus && <div className="sa-batch-live-note" style={{ marginTop: -8, marginBottom: 8 }}>{checkStatus}</div>}
+      {activeBatch && batchSummary && !checkStatus && (
+        <div className="sa-meta" style={{ marginTop: -8, marginBottom: 12 }}>
+          Сейчас идёт проверка этого автосалона ({batchSummary.completed}/{batchSummary.total}). Детали и управление — в трее проверок справа внизу.
+        </div>
+      )}
 
       {/* KPI */}
       <div className="sa-kpi-grid" style={{ marginBottom: 32 }}>

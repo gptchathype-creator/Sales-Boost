@@ -14,6 +14,17 @@ import { handleVoiceStreamMessage } from './voice/voiceStream';
 import { addCall, getCallHistory, getTestNumbers } from './voice/callHistory';
 import { startVoiceCall } from './voice/startVoiceCall';
 import { finalizeVoiceCallSession } from './voice/voiceCallSession';
+import {
+  cancelCallBatch,
+  createCallBatch,
+  getCallBatch,
+  getCallBatchJobs,
+  listCallBatches,
+  onVoxBatchWebhook,
+  pauseCallBatch,
+  resumeCallBatch,
+  startCallBatchOrchestrator,
+} from './voice/callBatchOrchestrator';
 import { getDefaultState } from './state/defaultState';
 import { buildDealershipFromCar } from './llm/virtualClient';
 import { loadCar } from './data/carLoader';
@@ -22,6 +33,7 @@ import { generateSpeechBuffer } from './voice/tts';
 import type { TtsVoice } from './state/userPreferences';
 import { transcribeVoice } from './voice/stt';
 import { classifyBehavior, type BehaviorSignal } from './logic/behaviorClassifier';
+import { getDealershipDirectory } from './super-admin/dealershipDirectory';
 import {
   advanceTopic,
   checkCriticalEvasions,
@@ -65,6 +77,7 @@ let voiceDashboardCache: { data: VoiceDashboardCache | null; expiresAt: number }
   expiresAt: 0,
 };
 import { getTunnelUrl } from './tunnel';
+import { getCallSourceInfo } from './voice/dealershipCallSource';
 
 const app = express();
 
@@ -1738,6 +1751,142 @@ app.post('/api/admin/start-voice-call', async (req, res) => {
   }
 });
 
+// Admin: create batch call orchestration job
+app.post('/api/admin/call-batches', async (req, res) => {
+  try {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const jobsRaw = Array.isArray((body as { jobs?: unknown[] }).jobs) ? ((body as { jobs: unknown[] }).jobs) : [];
+    const jobs = jobsRaw
+      .map((j) => (j && typeof j === 'object' ? j as { phone?: unknown; dealershipId?: unknown; dealershipName?: unknown } : null))
+      .filter((j): j is { phone?: unknown; dealershipId?: unknown; dealershipName?: unknown } => !!j)
+      .map((j) => ({
+        phone: j.phone != null ? String(j.phone) : '',
+        dealershipId: j.dealershipId != null ? String(j.dealershipId) : null,
+        dealershipName: j.dealershipName != null ? String(j.dealershipName) : null,
+      }));
+
+    const out = await createCallBatch({
+      mode: (body as { mode?: 'manual' | 'single_dealership' | 'all_dealerships' | 'auto_daily' }).mode ?? 'manual',
+      title: (body as { title?: string }).title,
+      jobs,
+      maxConcurrency: Number((body as { maxConcurrency?: number }).maxConcurrency ?? 10),
+      startIntervalMs: Number((body as { startIntervalMs?: number }).startIntervalMs ?? 250),
+      maxAttempts: Number((body as { maxAttempts?: number }).maxAttempts ?? 3),
+      scenario: (body as { scenario?: 'dialog' | 'realtime' | 'realtime_pure' }).scenario ?? 'realtime_pure',
+      testMode: !!(body as { testMode?: boolean }).testMode,
+    });
+    res.json({ ok: true, ...out });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Не удалось создать батч.';
+    res.status(400).json({ error: message });
+  }
+});
+
+app.get('/api/admin/call-batches/:id', async (req, res) => {
+  try {
+    const { batch, jobsPreview, dealershipSummary } = await getCallBatch(req.params.id);
+    res.json({ batch, jobsPreview, dealershipSummary });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Батч не найден.';
+    res.status(404).json({ error: message });
+  }
+});
+
+app.get('/api/admin/call-batches', async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(parseInt(String(req.query.limit ?? '50'), 10) || 50, 1), 200);
+    const modeRaw = String(req.query.mode ?? 'all').trim();
+    const allowedModes = new Set(['all', 'manual', 'single_dealership', 'all_dealerships', 'auto_daily']);
+    const mode = allowedModes.has(modeRaw) ? modeRaw as 'all' | 'manual' | 'single_dealership' | 'all_dealerships' | 'auto_daily' : 'all';
+    const items = await listCallBatches(limit, mode);
+    res.json({ items });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Не удалось получить список batch';
+    res.status(400).json({ error: message });
+  }
+});
+
+app.get('/api/admin/super-admin/dealership-schedules', async (_req, res) => {
+  try {
+    const schedules = getDealershipDirectory().map((d) => ({
+      id: d.id,
+      name: d.name,
+      city: d.city,
+      workStartHour: d.workStartHour,
+      workEndHour: d.workEndHour,
+    }));
+    res.json({ schedules });
+  } catch (err) {
+    console.error('super-admin/dealership-schedules error:', err);
+    res.json({ schedules: [] });
+  }
+});
+
+app.get('/api/admin/super-admin/call-orchestrator-config', async (_req, res) => {
+  try {
+    const callSource = getCallSourceInfo();
+    res.json({
+      callSource,
+      autoDailyEnabled: process.env.AUTO_DAILY_CALLS_ENABLED === 'true' || process.env.AUTO_DAILY_CALLS_ENABLED === '1',
+      batchTestModeEnabled: process.env.CALL_BATCH_TEST_MODE === 'true' || process.env.CALL_BATCH_TEST_MODE === '1',
+      sourceMode: process.env.CALL_SOURCE_MODE || 'mock',
+    });
+  } catch (err) {
+    console.error('super-admin/call-orchestrator-config error:', err);
+    res.json({
+      callSource: { mode: 'mock', targetsAvailable: 0, usingMockFallback: true },
+      autoDailyEnabled: false,
+      batchTestModeEnabled: false,
+      sourceMode: 'mock',
+    });
+  }
+});
+
+app.get('/api/admin/call-batches/:id/jobs', async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(parseInt(String(req.query.limit ?? '100'), 10) || 100, 1), 500);
+    const offset = Math.max(parseInt(String(req.query.offset ?? '0'), 10) || 0, 0);
+    const statusRaw = String(req.query.status ?? '').trim();
+    const allowedStatuses = new Set(['queued', 'dialing', 'in_progress', 'retry_wait', 'completed', 'failed', 'cancelled']);
+    const status = allowedStatuses.has(statusRaw) ? statusRaw as 'queued' | 'dialing' | 'in_progress' | 'retry_wait' | 'completed' | 'failed' | 'cancelled' : undefined;
+    const out = await getCallBatchJobs(req.params.id, limit, offset, status);
+    res.json(out);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Не удалось получить jobs батча.';
+    res.status(400).json({ error: message });
+  }
+});
+
+app.post('/api/admin/call-batches/:id/pause', async (req, res) => {
+  try {
+    await pauseCallBatch(req.params.id);
+    res.json({ ok: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Не удалось поставить батч на паузу.';
+    res.status(400).json({ error: message });
+  }
+});
+
+app.post('/api/admin/call-batches/:id/resume', async (req, res) => {
+  try {
+    await resumeCallBatch(req.params.id);
+    res.json({ ok: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Не удалось возобновить батч.';
+    res.status(400).json({ error: message });
+  }
+});
+
+app.post('/api/admin/call-batches/:id/cancel', async (req, res) => {
+  try {
+    await cancelCallBatch(req.params.id);
+    res.json({ ok: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Не удалось отменить батч.';
+    res.status(400).json({ error: message });
+  }
+});
+
 // Voximplant webhook: call events (disconnected, failed, no_answer, busy)
 app.post('/webhooks/vox', async (req, res) => {
   res.status(200).end();
@@ -1748,6 +1897,9 @@ app.post('/webhooks/vox', async (req, res) => {
   if (['disconnected', 'failed', 'no_answer', 'busy'].includes(event)) {
     finalizeVoiceCallSession(payload).catch((err) => {
       console.error('[webhooks/vox] finalizeVoiceCallSession error:', err instanceof Error ? err.message : err);
+    });
+    onVoxBatchWebhook(payload).catch((err) => {
+      console.error('[webhooks/vox] onVoxBatchWebhook error:', err instanceof Error ? err.message : err);
     });
   }
 });
@@ -2092,13 +2244,17 @@ app.get('/api/admin/super-admin/mock-entities', async (req, res) => {
         ]
       : [];
     const dealers = useMock
-      ? [
-          { id: 'd1', name: 'Автосалон Север‑1', city: 'Москва', avgScore: 84.2, audits: 24, bestEmployee: 'Иван П.', worstMetric: '—' },
-          { id: 'd2', name: 'Автосалон Север‑2', city: 'Москва', avgScore: 79.3, audits: 18, bestEmployee: 'Мария К.', worstMetric: 'Answer time' },
-          { id: 'd3', name: 'Автосалон Север‑СПб', city: 'Санкт‑Петербург', avgScore: 87.6, audits: 31, bestEmployee: 'Алексей В.', worstMetric: '—' },
-          { id: 'd4', name: 'Drive Москва', city: 'Москва', avgScore: 52.1, audits: 12, bestEmployee: 'Ольга С.', worstMetric: 'Script adherence' },
-          { id: 'd5', name: 'МоторСервис Центр', city: 'Казань', avgScore: 91.2, audits: 40, bestEmployee: 'Дмитрий Л.', worstMetric: '—' },
-        ]
+      ? getDealershipDirectory().map((d, idx) => ({
+          id: d.id,
+          name: d.name,
+          city: d.city,
+          avgScore: [84.2, 79.3, 87.6, 52.1, 91.2][idx] ?? 75,
+          audits: [24, 18, 31, 12, 40][idx] ?? 15,
+          bestEmployee: ['Иван П.', 'Мария К.', 'Алексей В.', 'Ольга С.', 'Дмитрий Л.'][idx] ?? '—',
+          worstMetric: ['—', 'Answer time', '—', 'Script adherence', '—'][idx] ?? '—',
+          workStartHour: d.workStartHour,
+          workEndHour: d.workEndHour,
+        }))
       : [];
     res.json({ companies, dealers });
   } catch (err) {
@@ -2198,6 +2354,7 @@ export function startServer(): Promise<void> {
     const useHttp = useTunnel || isLocalhost || !certPath || !keyPath || !config.miniAppUrl.startsWith('https://');
 
     const onListen = () => {
+      startCallBatchOrchestrator();
       resolve();
     };
 

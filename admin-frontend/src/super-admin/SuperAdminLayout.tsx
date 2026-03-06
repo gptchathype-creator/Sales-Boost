@@ -9,6 +9,7 @@ import { Autodealers } from './pages/Autodealers';
 import { EmployeeDetail } from './pages/EmployeeDetail';
 import { Audits } from './pages/Audits';
 import { AuditDetail } from './pages/AuditDetail';
+import { AuditBatchDetail } from './pages/AuditBatchDetail';
 import { Analytics } from './pages/Analytics';
 import { Settings } from './pages/Settings';
 import { DealerContent } from '../DealerViews';
@@ -16,12 +17,15 @@ import type { DealerTab } from '../DealerViews';
 import { StaffProfileContent, StaffTrainerContent } from '../StaffViews';
 import type { PlatformSummary, PlatformVoice } from './types';
 import { getMockDealershipDetail } from './mockData';
+import { CallBatchTray } from './CallBatchTray';
 import {
   fetchAudits,
+  fetchCallBatches,
   fetchTimeSeries,
   fetchMockEntities,
   fetchSuperAdminSettings,
   type AuditItem,
+  type CallBatchListItem,
   type TimeSeriesPoint,
   type MockCompany,
   type MockDealer,
@@ -41,6 +45,9 @@ export function SuperAdminLayout({ summary, voice, loadingSummary, role, onRoleC
   const [selectedDealershipId, setSelectedDealershipId] = useState<string | null>(null);
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
   const [selectedAuditId, setSelectedAuditId] = useState<string | null>(null);
+  const [selectedBatchDetailId, setSelectedBatchDetailId] = useState<string | null>(null);
+  const [focusedBatchId, setFocusedBatchId] = useState<string | null>(null);
+  const [auditsInitialScope, setAuditsInitialScope] = useState<'employees' | 'dealerships'>('employees');
   const [employeeSourceDealership, setEmployeeSourceDealership] = useState<{ id: string; name: string } | null>(null);
 
   const handleTabChange = (tab: SuperAdminTab) => {
@@ -48,6 +55,9 @@ export function SuperAdminLayout({ summary, voice, loadingSummary, role, onRoleC
     setSelectedDealershipId(null);
     setSelectedEmployeeId(null);
     setSelectedAuditId(null);
+    setSelectedBatchDetailId(null);
+    setFocusedBatchId(null);
+    setAuditsInitialScope('employees');
     setEmployeeSourceDealership(null);
   };
 
@@ -58,16 +68,19 @@ export function SuperAdminLayout({ summary, voice, loadingSummary, role, onRoleC
   const [audits, setAudits] = useState<AuditItem[]>([]);
   const [auditsLoading, setAuditsLoading] = useState(true);
   const [timeSeries, setTimeSeries] = useState<TimeSeriesPoint[]>([]);
+  const [callBatches, setCallBatches] = useState<CallBatchListItem[]>([]);
   const [companies, setCompanies] = useState<MockCompany[]>([]);
   const [dealers, setDealers] = useState<MockDealer[]>([]);
   const [settings, setSettings] = useState<SuperAdminSettings | null>(null);
   const [dataLoading, setDataLoading] = useState(true);
   const [backendNotRunning, setBackendNotRunning] = useState(false);
+  const [hasActiveBatch, setHasActiveBatch] = useState(false);
 
   useEffect(() => {
     if (role !== 'super' && role !== 'company') {
       setAudits([]);
       setTimeSeries([]);
+      setCallBatches([]);
       setCompanies([]);
       setDealers([]);
       setSettings(null);
@@ -82,13 +95,15 @@ export function SuperAdminLayout({ summary, voice, loadingSummary, role, onRoleC
     setBackendNotRunning(false);
     Promise.all([
       fetchAudits(200),
+      fetchCallBatches(80, 'all'),
       fetchTimeSeries(),
       fetchMockEntities(),
       fetchSuperAdminSettings(),
     ])
-      .then(([a, ts, mock, st]) => {
+      .then(([a, batches, ts, mock, st]) => {
         if (cancelled) return;
         setAudits(a);
+        setCallBatches(batches);
         setTimeSeries(ts);
         setCompanies(mock.companies);
         setDealers(mock.dealers);
@@ -98,6 +113,7 @@ export function SuperAdminLayout({ summary, voice, loadingSummary, role, onRoleC
         if (!cancelled) {
           setAudits([]);
           setTimeSeries([]);
+          setCallBatches([]);
           setCompanies([]);
           setDealers([]);
           setSettings(null);
@@ -115,6 +131,25 @@ export function SuperAdminLayout({ summary, voice, loadingSummary, role, onRoleC
     };
   }, [role]);
 
+  useEffect(() => {
+    if (role !== 'super' && role !== 'company') return;
+    let cancelled = false;
+    const pull = async () => {
+      try {
+        const batches = await fetchCallBatches(80, 'all');
+        if (!cancelled) setCallBatches(batches);
+      } catch {
+        if (!cancelled) setCallBatches([]);
+      }
+    };
+    pull();
+    const timer = window.setInterval(pull, 10_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [role]);
+
   const isSuperOrCompany = role === 'super' || role === 'company';
 
   useEffect(() => {
@@ -125,6 +160,20 @@ export function SuperAdminLayout({ summary, voice, loadingSummary, role, onRoleC
     }
   }, [activeTab, selectedDealershipId, selectedEmployeeId, selectedAuditId]);
 
+  // Подсветка пункта "Проверки" в сайдбаре, если есть активный ручной batch
+  useEffect(() => {
+    if (!isSuperOrCompany) {
+      setHasActiveBatch(false);
+      return;
+    }
+    const has = callBatches.some(
+      (b) =>
+        (b.mode === 'manual' || b.mode === 'single_dealership' || b.mode === 'all_dealerships') &&
+        (b.status === 'running' || b.status === 'paused'),
+    );
+    setHasActiveBatch(has);
+  }, [isSuperOrCompany, callBatches]);
+
   return (
     <div className="super-admin-app">
       <SuperAdminSidebar
@@ -132,6 +181,7 @@ export function SuperAdminLayout({ summary, voice, loadingSummary, role, onRoleC
         onTab={handleTabChange}
         role={role}
         onRoleChange={handleRoleChange}
+        hasActiveBatch={hasActiveBatch}
       />
       <main
         className="super-admin-main"
@@ -178,7 +228,20 @@ export function SuperAdminLayout({ summary, voice, loadingSummary, role, onRoleC
                 />
               )}
               {activeTab === 'companies' && !selectedDealershipId && (
-                <Companies companies={companies} loading={dataLoading} onSelectDealership={setSelectedDealershipId} />
+                <Companies
+                  companies={companies}
+                  loading={dataLoading}
+                  onSelectDealership={setSelectedDealershipId}
+                  onOpenBatchInAudits={(batchId) => {
+                    setSelectedDealershipId(null);
+                    setSelectedEmployeeId(null);
+                    setSelectedAuditId(null);
+                    setSelectedBatchDetailId(batchId);
+                    setActiveTab('audits');
+                    setAuditsInitialScope('dealerships');
+                    setFocusedBatchId(batchId);
+                  }}
+                />
               )}
               {activeTab === 'companies' && selectedDealershipId && (
                 <DealershipDetail
@@ -199,6 +262,15 @@ export function SuperAdminLayout({ summary, voice, loadingSummary, role, onRoleC
                     if (sourceId) {
                       setEmployeeSourceDealership({ id: sourceId, name: sourceName });
                     }
+                  }}
+                  onOpenBatchDetail={(batchId) => {
+                    setSelectedDealershipId(null);
+                    setSelectedEmployeeId(null);
+                    setSelectedAuditId(null);
+                    setSelectedBatchDetailId(batchId);
+                    setActiveTab('audits');
+                    setAuditsInitialScope('dealerships');
+                    setFocusedBatchId(batchId);
                   }}
                 />
               )}
@@ -239,8 +311,38 @@ export function SuperAdminLayout({ summary, voice, loadingSummary, role, onRoleC
                   sourceDealership={employeeSourceDealership}
                 />
               )}
-              {activeTab === 'audits' && !selectedAuditId && (
-                <Audits audits={audits} loading={auditsLoading} onOpenDetail={setSelectedAuditId} />
+              {activeTab === 'audits' && !selectedAuditId && !selectedBatchDetailId && (
+                <Audits
+                  audits={audits}
+                  callBatches={callBatches}
+                  callBatchesLoading={dataLoading}
+                  onScopeChange={setAuditsInitialScope}
+                  loading={auditsLoading}
+                  initialScope={auditsInitialScope}
+                  focusedBatchId={focusedBatchId}
+                  onOpenDetail={setSelectedAuditId}
+                  onOpenBatchDetail={(batchId) => {
+                    setSelectedBatchDetailId(batchId);
+                    setFocusedBatchId(batchId);
+                  }}
+                />
+              )}
+              {activeTab === 'audits' && !selectedAuditId && selectedBatchDetailId && (
+                <AuditBatchDetail
+                  batchId={selectedBatchDetailId}
+                  initialBatch={callBatches.find((b) => b.id === selectedBatchDetailId) ?? null}
+                  onBack={() => setSelectedBatchDetailId(null)}
+                  onOpenAudit={(auditId) => {
+                    setSelectedBatchDetailId(null);
+                    setSelectedAuditId(auditId);
+                  }}
+                  onOpenDealership={(dealershipId) => {
+                    setSelectedBatchDetailId(null);
+                    setSelectedAuditId(null);
+                    setActiveTab('companies');
+                    setSelectedDealershipId(dealershipId);
+                  }}
+                />
               )}
               {activeTab === 'audits' && selectedAuditId && (
                 <AuditDetail
@@ -293,6 +395,22 @@ export function SuperAdminLayout({ summary, voice, loadingSummary, role, onRoleC
             <Settings settings={settings} loading={dataLoading} />
           )}
         </div>
+
+        {/* Глобальный трей проверок в правом нижнем углу */}
+        {isSuperOrCompany && (
+          <CallBatchTray
+            items={callBatches}
+            onOpenBatchDetail={(batchId) => {
+              setSelectedDealershipId(null);
+              setSelectedEmployeeId(null);
+              setSelectedAuditId(null);
+              setSelectedBatchDetailId(batchId);
+              setActiveTab('audits');
+              setAuditsInitialScope('dealerships');
+              setFocusedBatchId(batchId);
+            }}
+          />
+        )}
       </main>
     </div>
   );

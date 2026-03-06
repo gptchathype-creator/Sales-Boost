@@ -155,3 +155,75 @@ model VoiceCallSession {
 
   @@map("voice_call_sessions")
 }
+
+model CallBatch {
+  id              String   @id @default(cuid())
+  mode            String   @default("manual") // "manual" | "single_dealership" | "all_dealerships"
+  status          String   @default("running") // "running" | "paused" | "cancelled" | "completed"
+  title           String?
+  maxConcurrency  Int      @default(10)
+  startIntervalMs Int      @default(250)
+  maxAttempts     Int      @default(3)
+  totalJobs       Int      @default(0)
+  queuedJobs      Int      @default(0)
+  inProgressJobs  Int      @default(0)
+  completedJobs   Int      @default(0)
+  failedJobs      Int      @default(0)
+  cancelledJobs   Int      @default(0)
+  retryingJobs    Int      @default(0)
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  jobs CallBatchJob[]
+
+  @@map("call_batches")
+}
+
+model CallBatchJob {
+  id              String   @id @default(cuid())
+  batchId         String
+  dealershipId    String?
+  dealershipName  String?
+  phone           String
+  status          String   @default("queued") // "queued" | "dialing" | "in_progress" | "retry_wait" | "completed" | "failed" | "cancelled"
+  attempt         Int      @default(0)
+  maxAttempts     Int      @default(3)
+  queuedAt        DateTime @default(now())
+  nextRunAt       DateTime @default(now())
+  startedAt       DateTime?
+  endedAt         DateTime?
+  lastError       String?
+  lastOutcome     String?
+  lastVoiceCallId String?
+  linkedAuditId   String?
+  linkReason      String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  batch    CallBatch         @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  attempts CallBatchAttempt[]
+
+  @@index([batchId, status, nextRunAt])
+  @@map("call_batch_jobs")
+}
+
+model CallBatchAttempt {
+  id          String   @id @default(cuid())
+  jobId       String
+  attempt     Int
+  voiceCallId String   @unique
+  status      String   @default("dialing") // "dialing" | "ended"
+  outcome     String?
+  error       String?
+  startedAt   DateTime @default(now())
+  endedAt     DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  job CallBatchJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId, attempt])
+  @@map("call_batch_attempts")
+}
