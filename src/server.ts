@@ -2349,9 +2349,18 @@ export function startServer(): Promise<void> {
 
     // For tunnel (Cloudflare), always use HTTP - tunnel provides HTTPS
     // When miniAppUrl is localhost, always use HTTP so the site loads in browser immediately
+    // Local dev (Vite admin on :5173) proxies /api → http://localhost:3000 — never bind HTTPS there
+    // or the browser/proxy gets ECONNRESET / "connection failed".
     const useTunnel = config.miniAppUrl.includes('trycloudflare.com') || config.miniAppUrl.includes('loca.lt') || config.miniAppUrl.includes('localtunnel.me') || config.miniAppUrl.includes('serveo') || config.miniAppUrl.includes('lhr.life');
     const isLocalhost = config.miniAppUrl.includes('localhost') || config.miniAppUrl.includes('127.0.0.1');
-    const useHttp = useTunnel || isLocalhost || !certPath || !keyPath || !config.miniAppUrl.startsWith('https://');
+    const isNonProduction = process.env.NODE_ENV !== 'production';
+    const useHttp =
+      useTunnel ||
+      isLocalhost ||
+      !certPath ||
+      !keyPath ||
+      !config.miniAppUrl.startsWith('https://') ||
+      isNonProduction;
 
     const onListen = () => {
       startCallBatchOrchestrator();
