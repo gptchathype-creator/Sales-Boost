@@ -26,4 +26,5 @@ export const config = {
   elevenLabsVoiceId: env.elevenLabsVoiceId,
   ttsProvider: env.ttsProvider,
   httpsProxy: env.httpsProxy,
+  authTokenSecret: env.authTokenSecret,
 };

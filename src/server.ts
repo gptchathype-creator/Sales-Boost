@@ -34,6 +34,29 @@ import type { TtsVoice } from './state/userPreferences';
 import { transcribeVoice } from './voice/stt';
 import { classifyBehavior, type BehaviorSignal } from './logic/behaviorClassifier';
 import { getDealershipDirectory } from './super-admin/dealershipDirectory';
+import { adminApiAuthMiddleware, handleAuthLogin, handleAuthMe } from './auth/http';
+import {
+  handleCreateDealership,
+  handleCreateHolding,
+  handleDeleteDealership,
+  handleDeleteHolding,
+  handleListDealerships,
+  handleListHoldings,
+  handleSyncMockOrganization,
+  handleUpdateDealership,
+  handleUpdateHolding,
+} from './auth/organizationManagement';
+import {
+  handleCreatePermissionTemplate,
+  handleCreateUser,
+  handleDeletePermissionTemplate,
+  handleDeleteUser,
+  handleListPermissionTemplates,
+  handleListUsers,
+  handleRbacMeta,
+  handleUpdatePermissionTemplate,
+  handleUpdateUser,
+} from './auth/userManagement';
 import {
   advanceTopic,
   checkCriticalEvasions,
@@ -662,9 +685,28 @@ app.get('/', (req, res) => {
   sendErrorHtml(res, 404, 'Файл не найден', 'Файл public/index.html не найден. Убедитесь, что папка public и index.html есть в проекте.');
 });
 
+app.post('/api/auth/login', (req, res) => {
+  handleAuthLogin(req, res).catch((error) => {
+    console.error('Auth login error:', error);
+    res.status(500).json({ error: 'Ошибка авторизации. Попробуйте позже.' });
+  });
+});
+
+app.get('/api/auth/me', (req, res) => {
+  handleAuthMe(req, res).catch((error) => {
+    console.error('Auth me error:', error);
+    res.status(500).json({ error: 'Ошибка проверки сессии. Попробуйте позже.' });
+  });
+});
+
 // API endpoint to verify admin and get data
 app.get('/api/admin/verify', async (req, res) => {
   try {
+    if (req.get('authorization')?.startsWith('Bearer ')) {
+      await handleAuthMe(req, res);
+      return;
+    }
+
     const { initData } = req.query;
     const isLocalhost = ['127.0.0.1', '::1', 'localhost'].includes(req.ip || '') ||
       (req.get('host') || '').startsWith('localhost');
@@ -719,6 +761,139 @@ app.get('/api/admin/verify', async (req, res) => {
     console.error('Verify error:', error);
     res.status(500).json({ error: 'Ошибка сервера. Попробуйте позже.' });
   }
+});
+
+app.use('/api/admin', (req, res, next) => {
+  adminApiAuthMiddleware(req, res, next).catch((error) => {
+    console.error('Admin API auth error:', error);
+    res.status(500).json({ error: 'Ошибка проверки доступа. Попробуйте позже.' });
+  });
+});
+
+app.get('/api/admin/rbac/meta', (req, res) => {
+  handleRbacMeta(req, res).catch((error) => {
+    console.error('RBAC meta error:', error);
+    res.status(500).json({ error: 'Не удалось загрузить RBAC-метаданные.' });
+  });
+});
+
+app.get('/api/admin/holdings', (req, res) => {
+  handleListHoldings(req, res).catch((error) => {
+    console.error('List holdings error:', error);
+    res.status(500).json({ error: 'Не удалось загрузить холдинги.' });
+  });
+});
+
+app.post('/api/admin/holdings', (req, res) => {
+  handleCreateHolding(req, res).catch((error) => {
+    console.error('Create holding route error:', error);
+    res.status(500).json({ error: 'Не удалось создать холдинг.' });
+  });
+});
+
+app.patch('/api/admin/holdings/:holdingId', (req, res) => {
+  handleUpdateHolding(req, res).catch((error) => {
+    console.error('Update holding route error:', error);
+    res.status(500).json({ error: 'Не удалось обновить холдинг.' });
+  });
+});
+
+app.delete('/api/admin/holdings/:holdingId', (req, res) => {
+  handleDeleteHolding(req, res).catch((error) => {
+    console.error('Delete holding route error:', error);
+    res.status(500).json({ error: 'Не удалось удалить холдинг.' });
+  });
+});
+
+app.get('/api/admin/dealerships', (req, res) => {
+  handleListDealerships(req, res).catch((error) => {
+    console.error('List dealerships error:', error);
+    res.status(500).json({ error: 'Не удалось загрузить автосалоны.' });
+  });
+});
+
+app.post('/api/admin/dealerships', (req, res) => {
+  handleCreateDealership(req, res).catch((error) => {
+    console.error('Create dealership route error:', error);
+    res.status(500).json({ error: 'Не удалось создать автосалон.' });
+  });
+});
+
+app.patch('/api/admin/dealerships/:dealershipId', (req, res) => {
+  handleUpdateDealership(req, res).catch((error) => {
+    console.error('Update dealership route error:', error);
+    res.status(500).json({ error: 'Не удалось обновить автосалон.' });
+  });
+});
+
+app.delete('/api/admin/dealerships/:dealershipId', (req, res) => {
+  handleDeleteDealership(req, res).catch((error) => {
+    console.error('Delete dealership route error:', error);
+    res.status(500).json({ error: 'Не удалось удалить автосалон.' });
+  });
+});
+
+app.post('/api/admin/organization/sync-mock', (req, res) => {
+  handleSyncMockOrganization(req, res).catch((error) => {
+    console.error('Sync mock organization route error:', error);
+    res.status(500).json({ error: 'Не удалось синхронизировать оргструктуру.' });
+  });
+});
+
+app.get('/api/admin/users', (req, res) => {
+  handleListUsers(req, res).catch((error) => {
+    console.error('List users error:', error);
+    res.status(500).json({ error: 'Не удалось загрузить пользователей.' });
+  });
+});
+
+app.post('/api/admin/users', (req, res) => {
+  handleCreateUser(req, res).catch((error) => {
+    console.error('Create user route error:', error);
+    res.status(500).json({ error: 'Не удалось создать пользователя.' });
+  });
+});
+
+app.patch('/api/admin/users/:accountId', (req, res) => {
+  handleUpdateUser(req, res).catch((error) => {
+    console.error('Update user route error:', error);
+    res.status(500).json({ error: 'Не удалось обновить пользователя.' });
+  });
+});
+
+app.delete('/api/admin/users/:accountId', (req, res) => {
+  handleDeleteUser(req, res).catch((error) => {
+    console.error('Delete user route error:', error);
+    res.status(500).json({ error: 'Не удалось удалить пользователя.' });
+  });
+});
+
+app.get('/api/admin/permission-templates', (req, res) => {
+  handleListPermissionTemplates(req, res).catch((error) => {
+    console.error('List permission templates error:', error);
+    res.status(500).json({ error: 'Не удалось загрузить шаблоны прав.' });
+  });
+});
+
+app.post('/api/admin/permission-templates', (req, res) => {
+  handleCreatePermissionTemplate(req, res).catch((error) => {
+    console.error('Create permission template error:', error);
+    res.status(500).json({ error: 'Не удалось создать шаблон прав.' });
+  });
+});
+
+app.patch('/api/admin/permission-templates/:templateId', (req, res) => {
+  handleUpdatePermissionTemplate(req, res).catch((error) => {
+    console.error('Update permission template error:', error);
+    res.status(500).json({ error: 'Не удалось обновить шаблон прав.' });
+  });
+});
+
+app.delete('/api/admin/permission-templates/:templateId', (req, res) => {
+  handleDeletePermissionTemplate(req, res).catch((error) => {
+    console.error('Delete permission template error:', error);
+    res.status(500).json({ error: 'Не удалось удалить шаблон прав.' });
+  });
 });
 
 // Get training session details (V2 evaluation-aware)
@@ -2349,18 +2524,9 @@ export function startServer(): Promise<void> {
 
     // For tunnel (Cloudflare), always use HTTP - tunnel provides HTTPS
     // When miniAppUrl is localhost, always use HTTP so the site loads in browser immediately
-    // Local dev (Vite admin on :5173) proxies /api → http://localhost:3000 — never bind HTTPS there
-    // or the browser/proxy gets ECONNRESET / "connection failed".
     const useTunnel = config.miniAppUrl.includes('trycloudflare.com') || config.miniAppUrl.includes('loca.lt') || config.miniAppUrl.includes('localtunnel.me') || config.miniAppUrl.includes('serveo') || config.miniAppUrl.includes('lhr.life');
     const isLocalhost = config.miniAppUrl.includes('localhost') || config.miniAppUrl.includes('127.0.0.1');
-    const isNonProduction = process.env.NODE_ENV !== 'production';
-    const useHttp =
-      useTunnel ||
-      isLocalhost ||
-      !certPath ||
-      !keyPath ||
-      !config.miniAppUrl.startsWith('https://') ||
-      isNonProduction;
+    const useHttp = useTunnel || isLocalhost || !certPath || !keyPath || !config.miniAppUrl.startsWith('https://');
 
     const onListen = () => {
       startCallBatchOrchestrator();

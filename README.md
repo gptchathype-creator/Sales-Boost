@@ -263,5 +263,11 @@ npx prisma studio
 - Проверьте права доступа к файлу базы данных
 
 ## Лицензия
-
 ISC
+
+# Дополнительно
+
+Создать администратора
+```bash
+npm run auth:create-admin -- admin@example.com 123123123 "Main Admin"
+```

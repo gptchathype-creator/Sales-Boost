@@ -323,6 +323,12 @@ export function getMockDealershipDetail(id: string): DealershipDetail | null {
   return buildDetail(seed);
 }
 
+export function getMockDealershipDetailByName(name: string): DealershipDetail | null {
+  const seed = DEALERSHIP_SEEDS.find((s) => s.name === name);
+  if (!seed) return null;
+  return buildDetail(seed);
+}
+
 export function getAllCities(): string[] {
   return [...new Set(DEALERSHIP_SEEDS.map((s) => s.city))];
 }

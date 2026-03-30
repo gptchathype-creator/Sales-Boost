@@ -1,13 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import type { MockCompany } from '../api';
+import { apiFetch } from '../../auth/api';
 import {
-  adaptCompaniesToRows,
   STATUS_LABELS,
   STATUS_ORDER,
   type DealershipRow,
   type DealershipStatus,
-  getAllCities,
 } from '../mockData';
+import type { DealershipItem } from '../api';
 import { ratingClass, answerRateClass, answerTimeClass, deltaDisplay, statusBadgeClass } from '../utils';
 import {
   ACTIVE_BATCH_STORAGE_KEY,
@@ -21,7 +20,7 @@ const API_BASE = '';
 /* ────────────────────── Props ────────────────────── */
 
 type CompaniesProps = {
-  companies: MockCompany[];
+  dealerships: DealershipItem[];
   loading?: boolean;
   onSelectDealership?: (id: string) => void;
   onOpenBatchInAudits?: (batchId: string) => void;
@@ -65,9 +64,27 @@ type Period = '7d' | '30d' | 'custom';
 
 /* ────────────────────── Component ────────────────────── */
 
-export function Companies({ companies, loading = false, onSelectDealership, onOpenBatchInAudits }: CompaniesProps) {
-  const rows = useMemo(() => adaptCompaniesToRows(companies), [companies]);
-  const allCities = useMemo(() => getAllCities(), []);
+export function Companies({ dealerships, loading = false, onSelectDealership, onOpenBatchInAudits }: CompaniesProps) {
+  const rows = useMemo<DealershipRow[]>(
+    () =>
+      dealerships.map((item) => ({
+        id: item.id,
+        name: item.name,
+        city: item.city || '—',
+        aiRating: 0,
+        answerRate: null,
+        avgAnswerTimeSec: null,
+        auditsCount: 0,
+        employeesCount: item.managersCount,
+        deltaRating: null,
+        status: 'no-data',
+      })),
+    [dealerships],
+  );
+  const allCities = useMemo(
+    () => [...new Set(rows.map((item) => item.city).filter(Boolean))],
+    [rows],
+  );
 
   const [search, setSearch] = useState('');
   const [period, setPeriod] = useState<Period>('30d');
@@ -131,7 +148,7 @@ export function Companies({ companies, loading = false, onSelectDealership, onOp
   };
 
   async function fetchTestNumbers(): Promise<string[]> {
-    const res = await fetch(`${API_BASE}/api/admin/test-numbers`);
+    const res = await apiFetch(`${API_BASE}/api/admin/test-numbers`);
     if (!res.ok) throw new Error('Не удалось получить тестовые номера');
     const data = await res.json().catch(() => ({}));
     const nums = Array.isArray(data?.numbers) ? data.numbers.map((x: unknown) => String(x)) : [];
@@ -213,7 +230,7 @@ export function Companies({ companies, loading = false, onSelectDealership, onOp
         dealershipName: d.name,
         phone: numbers[idx % numbers.length],
       }));
-      const res = await fetch(`${API_BASE}/api/admin/call-batches`, {
+      const res = await apiFetch(`${API_BASE}/api/admin/call-batches`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -257,7 +274,7 @@ export function Companies({ companies, loading = false, onSelectDealership, onOp
         dealershipName: d.name,
         phone: '',
       }));
-      const res = await fetch(`${API_BASE}/api/admin/call-batches`, {
+      const res = await apiFetch(`${API_BASE}/api/admin/call-batches`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -293,7 +310,7 @@ export function Companies({ companies, loading = false, onSelectDealership, onOp
   async function setBatchMode(action: 'pause' | 'resume' | 'cancel') {
     if (!activeBatchId) return;
     setBatchError(null);
-    const res = await fetch(`${API_BASE}/api/admin/call-batches/${activeBatchId}/${action}`, { method: 'POST' });
+    const res = await apiFetch(`${API_BASE}/api/admin/call-batches/${activeBatchId}/${action}`, { method: 'POST' });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       setBatchError(data?.error || `Не удалось выполнить ${action}`);

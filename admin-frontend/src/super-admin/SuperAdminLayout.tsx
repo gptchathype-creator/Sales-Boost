@@ -3,8 +3,10 @@ import './super-admin-theme.css';
 import { SuperAdminSidebar, SIDEBAR_WIDTH, getDefaultTab } from './SuperAdminSidebar';
 import type { SuperAdminTab, AdminRole } from './SuperAdminSidebar';
 import { Dashboard } from './pages/Dashboard';
+import { HoldingsPage } from './pages/Holdings';
 import { Companies } from './pages/Companies';
 import { DealershipDetail } from './pages/DealershipDetail';
+import { UsersPage } from './pages/Users';
 import { Autodealers } from './pages/Autodealers';
 import { EmployeeDetail } from './pages/EmployeeDetail';
 import { Audits } from './pages/Audits';
@@ -16,16 +18,17 @@ import { DealerContent } from '../DealerViews';
 import type { DealerTab } from '../DealerViews';
 import { StaffProfileContent, StaffTrainerContent } from '../StaffViews';
 import type { PlatformSummary, PlatformVoice } from './types';
-import { getMockDealershipDetail } from './mockData';
 import { CallBatchTray } from './CallBatchTray';
 import {
   fetchAudits,
   fetchCallBatches,
+  fetchDealerships,
   fetchTimeSeries,
   fetchMockEntities,
   fetchSuperAdminSettings,
   type AuditItem,
   type CallBatchListItem,
+  type DealershipItem,
   type TimeSeriesPoint,
   type MockCompany,
   type MockDealer,
@@ -37,10 +40,13 @@ export type SuperAdminLayoutProps = {
   voice: PlatformVoice | null;
   loadingSummary: boolean;
   role: AdminRole;
+  profileName: string;
   onRoleChange: (role: AdminRole) => void;
+  onLogout: () => void;
+  allowedRoles: AdminRole[];
 };
 
-export function SuperAdminLayout({ summary, voice, loadingSummary, role, onRoleChange }: SuperAdminLayoutProps) {
+export function SuperAdminLayout({ summary, voice, loadingSummary, role, profileName, onRoleChange, onLogout, allowedRoles }: SuperAdminLayoutProps) {
   const [activeTab, setActiveTab] = useState<SuperAdminTab>(() => getDefaultTab(role));
   const [selectedDealershipId, setSelectedDealershipId] = useState<string | null>(null);
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
@@ -71,6 +77,7 @@ export function SuperAdminLayout({ summary, voice, loadingSummary, role, onRoleC
   const [callBatches, setCallBatches] = useState<CallBatchListItem[]>([]);
   const [companies, setCompanies] = useState<MockCompany[]>([]);
   const [dealers, setDealers] = useState<MockDealer[]>([]);
+  const [realDealerships, setRealDealerships] = useState<DealershipItem[]>([]);
   const [settings, setSettings] = useState<SuperAdminSettings | null>(null);
   const [dataLoading, setDataLoading] = useState(true);
   const [backendNotRunning, setBackendNotRunning] = useState(false);
@@ -83,6 +90,7 @@ export function SuperAdminLayout({ summary, voice, loadingSummary, role, onRoleC
       setCallBatches([]);
       setCompanies([]);
       setDealers([]);
+      setRealDealerships([]);
       setSettings(null);
       setAuditsLoading(false);
       setDataLoading(false);
@@ -98,15 +106,17 @@ export function SuperAdminLayout({ summary, voice, loadingSummary, role, onRoleC
       fetchCallBatches(80, 'all'),
       fetchTimeSeries(),
       fetchMockEntities(),
+      fetchDealerships(),
       fetchSuperAdminSettings(),
     ])
-      .then(([a, batches, ts, mock, st]) => {
+      .then(([a, batches, ts, mock, realD, st]) => {
         if (cancelled) return;
         setAudits(a);
         setCallBatches(batches);
         setTimeSeries(ts);
         setCompanies(mock.companies);
         setDealers(mock.dealers);
+        setRealDealerships(realD);
         setSettings(st);
       })
       .catch(() => {
@@ -116,6 +126,7 @@ export function SuperAdminLayout({ summary, voice, loadingSummary, role, onRoleC
           setCallBatches([]);
           setCompanies([]);
           setDealers([]);
+          setRealDealerships([]);
           setSettings(null);
           setBackendNotRunning(true);
         }
@@ -180,8 +191,11 @@ export function SuperAdminLayout({ summary, voice, loadingSummary, role, onRoleC
         activeTab={activeTab}
         onTab={handleTabChange}
         role={role}
+        profileName={profileName}
         onRoleChange={handleRoleChange}
         hasActiveBatch={hasActiveBatch}
+        onLogout={onLogout}
+        allowedRoles={allowedRoles}
       />
       <main
         className="super-admin-main"
@@ -227,9 +241,12 @@ export function SuperAdminLayout({ summary, voice, loadingSummary, role, onRoleC
                   audits={audits}
                 />
               )}
+              {activeTab === 'holdings' && role === 'super' && (
+                <HoldingsPage />
+              )}
               {activeTab === 'companies' && !selectedDealershipId && (
                 <Companies
-                  companies={companies}
+                  dealerships={realDealerships}
                   loading={dataLoading}
                   onSelectDealership={setSelectedDealershipId}
                   onOpenBatchInAudits={(batchId) => {
@@ -246,12 +263,13 @@ export function SuperAdminLayout({ summary, voice, loadingSummary, role, onRoleC
               {activeTab === 'companies' && selectedDealershipId && (
                 <DealershipDetail
                   dealershipId={selectedDealershipId}
+                  dealership={realDealerships.find((item) => item.id === selectedDealershipId) ?? null}
                   onBack={() => setSelectedDealershipId(null)}
                   onOpenEmployee={(empId) => {
                     const sourceId = selectedDealershipId;
                     const sourceName = sourceId
                       ? (
-                        getMockDealershipDetail(sourceId)?.name
+                        realDealerships.find((item) => item.id === sourceId)?.name
                         ?? companies.find((c) => c.id === sourceId)?.name
                         ?? sourceId
                       )
@@ -273,6 +291,9 @@ export function SuperAdminLayout({ summary, voice, loadingSummary, role, onRoleC
                     setFocusedBatchId(batchId);
                   }}
                 />
+              )}
+              {activeTab === 'users' && (
+                <UsersPage role={role} />
               )}
               {activeTab === 'autodealers' && !selectedEmployeeId && (
                 <Autodealers
