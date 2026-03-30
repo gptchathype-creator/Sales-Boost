@@ -1,9 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { apiFetch } from '../../auth/api';
 import {
   getMockDealershipDetail,
+  getMockDealershipDetailByName,
   STATUS_LABELS,
   type DealershipDetail as Detail,
 } from '../mockData';
+import type { DealershipItem } from '../api';
 import { ratingClass, answerRateClass, answerTimeClass, statusBadgeClass, exportPageToPdf } from '../utils';
 import {
   ACTIVE_BATCH_STORAGE_KEY,
@@ -16,6 +19,7 @@ import {
 
 type Props = {
   dealershipId: string;
+  dealership?: DealershipItem | null;
   onBack: () => void;
   onOpenEmployee?: (id: string) => void;
   onOpenBatchDetail?: (batchId: string) => void;
@@ -255,8 +259,11 @@ function AuditHistory({ audits }: { audits: Detail['audits'] }) {
 
 /* ────────────────────── Main Component ────────────────────── */
 
-export function DealershipDetail({ dealershipId, onBack, onOpenEmployee, onOpenBatchDetail }: Props) {
-  const detail = useMemo(() => getMockDealershipDetail(dealershipId), [dealershipId]);
+export function DealershipDetail({ dealershipId, dealership, onBack, onOpenEmployee, onOpenBatchDetail }: Props) {
+  const detail = useMemo(
+    () => getMockDealershipDetail(dealershipId) || (dealership?.name ? getMockDealershipDetailByName(dealership.name) : null),
+    [dealershipId, dealership?.name],
+  );
   const [checkLoading, setCheckLoading] = useState(false);
   const [checkStatus, setCheckStatus] = useState<string | null>(null);
   const [activeBatchId, setActiveBatchId] = useState<string | null>(null);
@@ -330,13 +337,13 @@ export function DealershipDetail({ dealershipId, onBack, onOpenEmployee, onOpenB
     setCheckLoading(true);
     setCheckStatus(null);
     try {
-      const numsRes = await fetch('/api/admin/test-numbers');
+      const numsRes = await apiFetch('/api/admin/test-numbers');
       const numsData = await numsRes.json().catch(() => ({}));
       const numbers = Array.isArray(numsData?.numbers) ? numsData.numbers.map((x: unknown) => String(x)).filter((x: string) => x.trim()) : [];
       if (!numbers.length) {
         throw new Error('Нет тестовых номеров. Добавьте VOX_TEST_TO или VOX_TEST_NUMBERS');
       }
-      const res = await fetch('/api/admin/call-batches', {
+      const res = await apiFetch('/api/admin/call-batches', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -383,7 +390,7 @@ export function DealershipDetail({ dealershipId, onBack, onOpenEmployee, onOpenB
       <div className="sa-detail-header">
         <div>
           <h1 className="sa-page-title" style={{ marginBottom: 4 }}>{detail.name}</h1>
-          <p className="sa-page-subtitle" style={{ marginBottom: 0 }}>{detail.city}</p>
+          <p className="sa-page-subtitle" style={{ marginBottom: 0 }}>{dealership?.city || detail.city}</p>
         </div>
         <div className="sa-detail-header-right">
           <span className={statusBadgeClass(detail.status)}>{STATUS_LABELS[detail.status]}</span>

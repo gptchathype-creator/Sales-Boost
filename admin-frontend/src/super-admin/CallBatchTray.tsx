@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { apiFetch } from '../auth/api';
 import { fetchCallBatchById, type CallBatchListItem } from './api';
 
 type Props = {
@@ -117,7 +118,7 @@ export function CallBatchTray({ onOpenBatchDetail, items }: Props) {
   async function setBatchMode(action: 'pause' | 'resume' | 'cancel') {
     if (!batchId) return;
     try {
-      const res = await fetch(`/api/admin/call-batches/${batchId}/${action}`, { method: 'POST' });
+      const res = await apiFetch(`/api/admin/call-batches/${batchId}/${action}`, { method: 'POST' });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         setError(data?.error || `Не удалось выполнить ${action}`);
@@ -272,4 +273,3 @@ export function CallBatchTray({ onOpenBatchDetail, items }: Props) {
     </div>
   );
 }
-

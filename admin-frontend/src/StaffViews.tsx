@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { apiFetch } from './auth/api';
 import {
   Card,
   CardBody,
@@ -102,7 +103,7 @@ export function StaffProfileContent() {
       return () => { cancelled = true; };
     }
 
-    fetch(`${API_BASE}/api/admin/attempts?page=0&limit=1000`)
+    apiFetch(`${API_BASE}/api/admin/attempts?page=0&limit=1000`)
       .then((res) => {
         if (!res.ok) return {};
         return res.text().then(t => t ? JSON.parse(t) : {});

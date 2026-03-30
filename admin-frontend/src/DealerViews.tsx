@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { apiFetch } from './auth/api';
 import {
   Card,
   CardBody,
@@ -105,6 +106,19 @@ type ExpensesInfo = {
   billingUrl: string;
 };
 
+<<<<<<< HEAD
+=======
+type ScopedDealership = {
+  id: string;
+  name: string;
+  city: string | null;
+  address: string | null;
+  holdingName: string | null;
+  managersCount: number;
+  isActive: boolean;
+};
+
+>>>>>>> d6c9dfa (dev version with RBAC and auth)
 const isDevHost =
   typeof window !== 'undefined' &&
   (window.location.hostname === 'localhost' ||
@@ -276,6 +290,7 @@ function buildMockAttemptDetail(attempt: Attempt): AttemptDetail {
   };
 }
 
+<<<<<<< HEAD
 const mockHoldingDealers = [
   {
     id: 'dealer-1',
@@ -306,6 +321,8 @@ const mockHoldingDealers = [
   },
 ];
 
+=======
+>>>>>>> d6c9dfa (dev version with RBAC and auth)
 /* ─────────────────────────────────────────────────────────────────────── */
 /*  Sub-components (copied exactly from old App.tsx)                      */
 /* ─────────────────────────────────────────────────────────────────────── */
@@ -335,7 +352,11 @@ function EmployeesTab(props: {
       } else {
         url = `${API_BASE}/api/admin/attempts/${attempt.id}`;
       }
+<<<<<<< HEAD
       const res = await fetch(url);
+=======
+      const res = await apiFetch(url);
+>>>>>>> d6c9dfa (dev version with RBAC and auth)
       if (!res.ok) {
         if (isDevHost) {
           setDetail(buildMockAttemptDetail(attempt));
@@ -575,7 +596,11 @@ function CallsTab(props: {
     async function loadSaved() {
       setSavedNumbersLoading(true);
       try {
+<<<<<<< HEAD
         const res = await fetch(`${API_BASE}/api/admin/test-numbers`);
+=======
+        const res = await apiFetch(`${API_BASE}/api/admin/test-numbers`);
+>>>>>>> d6c9dfa (dev version with RBAC and auth)
         if (!res.ok) { if (!cancelled) setSavedNumbersLoading(false); return; }
         const text = await res.text();
         const data = text ? JSON.parse(text) : {};
@@ -1035,22 +1060,68 @@ function TeamTab(props: { loading: boolean; error: string | null; summary: TeamS
 }
 
 function DealerCompaniesTab() {
+<<<<<<< HEAD
+=======
+  const [items, setItems] = useState<ScopedDealership[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await apiFetch(`${API_BASE}/api/admin/dealerships`);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data?.error || 'Не удалось загрузить автосалоны.');
+        if (!cancelled) {
+          setItems(Array.isArray(data.items) ? data.items as ScopedDealership[] : []);
+        }
+      } catch (loadError) {
+        if (!cancelled) {
+          setItems([]);
+          setError(loadError instanceof Error ? loadError.message : 'Не удалось загрузить автосалоны.');
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+>>>>>>> d6c9dfa (dev version with RBAC and auth)
   return (
     <div className="space-y-3">
       <Card shadow="sm" className="admin-card-light">
         <CardBody>
+<<<<<<< HEAD
           <div className="text-sm font-semibold mb-1">Компании</div>
           <p className="text-xs text-default-500 mb-3">
             Список компаний и точек. В проде здесь будут реальные данные холдинга.
           </p>
           <div className="space-y-2 text-xs">
             {mockHoldingDealers.map((d) => (
+=======
+          <div className="text-sm font-semibold mb-1">Автосалон</div>
+          <p className="text-xs text-default-500 mb-3">
+            Реальные данные по доступным автосалонам из org-структуры.
+          </p>
+          {loading && <div className="text-xs text-default-500">Загрузка...</div>}
+          {error && <div className="text-xs text-danger">{error}</div>}
+          <div className="space-y-2 text-xs">
+            {items.map((d) => (
+>>>>>>> d6c9dfa (dev version with RBAC and auth)
               <div
                 key={d.id}
                 className="rounded-md admin-card-inner p-2 flex justify-between gap-3"
               >
                 <div className="min-w-0">
                   <div className="font-semibold truncate">{d.name}</div>
+<<<<<<< HEAD
                   <div className="text-[11px] text-default-500">Город: {d.city} · Менеджеров: {d.managers}</div>
                 </div>
                 <div className="text-right text-[11px]">
@@ -1059,6 +1130,24 @@ function DealerCompaniesTab() {
                 </div>
               </div>
             ))}
+=======
+                  <div className="text-[11px] text-default-500">
+                    Город: {d.city || '—'} · Холдинг: {d.holdingName || 'Без холдинга'} · Менеджеров: {d.managersCount}
+                  </div>
+                  <div className="text-[11px] text-default-500">
+                    {d.address || 'Адрес не указан'}
+                  </div>
+                </div>
+                <div className="text-right text-[11px]">
+                  <div className="text-xs text-default-500">Статус</div>
+                  <div className="text-sm font-semibold">{d.isActive ? 'Активен' : 'Отключён'}</div>
+                </div>
+              </div>
+            ))}
+            {!loading && !error && items.length === 0 && (
+              <div className="text-xs text-default-500">Нет доступных автосалонов.</div>
+            )}
+>>>>>>> d6c9dfa (dev version with RBAC and auth)
           </div>
         </CardBody>
       </Card>
@@ -1113,7 +1202,11 @@ export function DealerContent(props: { summary: any; voice: any; loadingSummary:
 
   async function safeFetchJson(url: string): Promise<any> {
     try {
+<<<<<<< HEAD
       const res = await fetch(url);
+=======
+      const res = await apiFetch(url);
+>>>>>>> d6c9dfa (dev version with RBAC and auth)
       if (!res.ok) return null;
       const text = await res.text();
       if (!text) return null;
@@ -1205,7 +1298,11 @@ export function DealerContent(props: { summary: any; voice: any; loadingSummary:
     setStartCallLoading(true);
     setStartCallStatus('Инициируем звонок...');
     try {
+<<<<<<< HEAD
       const res = await fetch(`${API_BASE}/api/admin/start-voice-call`, {
+=======
+      const res = await apiFetch(`${API_BASE}/api/admin/start-voice-call`, {
+>>>>>>> d6c9dfa (dev version with RBAC and auth)
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ to: phone.trim(), scenario: 'realtime_pure' }),

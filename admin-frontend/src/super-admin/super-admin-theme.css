@@ -814,10 +814,47 @@
   border: 1px solid var(--sa-divider);
   border-radius: 10px;
   font-size: 13px;
+<<<<<<< HEAD
   background: var(--sa-bg);
   color: var(--sa-text);
   outline: none;
   cursor: pointer;
+=======
+  background: #f3f4f6;
+  color: var(--sa-text);
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+.sa-input {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--sa-divider);
+  border-radius: 10px;
+  font-size: 13px;
+  background: #f3f4f6;
+  color: var(--sa-text);
+  outline: none;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+.sa-input::placeholder {
+  color: var(--sa-text-secondary);
+}
+.sa-input:hover,
+.sa-select:hover {
+  background: #e5e7eb;
+}
+.sa-input:focus,
+.sa-select:focus {
+  border-color: var(--primary, #6366F1);
+  background: #eef2ff;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+}
+.sa-input:disabled,
+.sa-select:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+>>>>>>> d6c9dfa (dev version with RBAC and auth)
 }
 .sa-btn-outline {
   padding: 8px 14px;
@@ -2582,4 +2619,7 @@
   font-size: 11px;
   color: var(--sa-text-secondary);
 }
+<<<<<<< HEAD
 
+=======
+>>>>>>> d6c9dfa (dev version with RBAC and auth)

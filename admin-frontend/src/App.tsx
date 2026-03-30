@@ -1,6 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useUnit } from 'effector-react';
+import { LoginPage } from './auth/LoginPage';
+import { $auth, authUnauthorized, bootstrapAuth, logout, type FrontendRole } from './auth/model';
+import { apiFetch } from './auth/api';
 import { SuperAdminLayout } from './super-admin/SuperAdminLayout';
-import type { AdminRole } from './super-admin/SuperAdminSidebar';
 
 type TeamSummary = {
   totalAttempts: number;
@@ -32,12 +35,32 @@ type VoiceDashboard = {
 const API_BASE = '';
 
 export default function App() {
-  const [role, setRole] = useState<AdminRole>('super');
+  const auth = useUnit($auth);
+  const [role, setRole] = useState<FrontendRole>('super');
   const [teamSummary, setTeamSummary] = useState<TeamSummary | null>(null);
   const [teamLoading, setTeamLoading] = useState(false);
   const [voiceDashboard, setVoiceDashboard] = useState<VoiceDashboard | null>(null);
 
+  const allowedRoles = auth.status === 'authenticated' ? auth.user.allowedRoles : [];
+  const defaultRole = auth.status === 'authenticated' ? auth.user.defaultRole : 'super';
+  const profileName = auth.status === 'authenticated'
+    ? (auth.user.account.displayName?.trim() || auth.user.account.email)
+    : '—';
+
   useEffect(() => {
+    bootstrapAuth();
+    const onUnauthorized = () => authUnauthorized();
+    window.addEventListener('auth:unauthorized', onUnauthorized);
+    return () => window.removeEventListener('auth:unauthorized', onUnauthorized);
+  }, []);
+
+  useEffect(() => {
+    if (auth.status !== 'authenticated') return;
+    setRole((current) => (auth.user.allowedRoles.includes(current) ? current : auth.user.defaultRole));
+  }, [auth]);
+
+  useEffect(() => {
+    if (auth.status !== 'authenticated') return;
     if (role === 'super' || role === 'company') {
       loadTeamSummary();
       return;
@@ -45,7 +68,7 @@ export default function App() {
     setTeamSummary(null);
     setVoiceDashboard(null);
     setTeamLoading(false);
-  }, [role]);
+  }, [role, auth.status]);
 
   async function loadTeamSummary() {
     setTeamLoading(true);
@@ -55,8 +78,8 @@ export default function App() {
         try { const t = await r.text(); return t ? JSON.parse(t) : null; } catch { return null; }
       };
       const [summaryRes, voiceRes] = await Promise.all([
-        fetch(`${API_BASE}/api/admin/summary`).catch(() => null),
-        fetch(`${API_BASE}/api/admin/voice-dashboard`).catch(() => null),
+        apiFetch(`${API_BASE}/api/admin/summary`).catch(() => null),
+        apiFetch(`${API_BASE}/api/admin/voice-dashboard`).catch(() => null),
       ]);
       const data = await safeParse(summaryRes);
       if (data) {
@@ -94,13 +117,37 @@ export default function App() {
     }
   }
 
+  const loginRequired = useMemo(
+    () => auth.status === 'guest',
+    [auth.status],
+  );
+
+  if (auth.status === 'checking') {
+    return (
+      <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: '#0f172a', color: '#fff' }}>
+        Проверка сессии...
+      </div>
+    );
+  }
+
+  if (loginRequired) {
+    return <LoginPage />;
+  }
+
   return (
     <SuperAdminLayout
       summary={teamSummary}
       voice={voiceDashboard}
       loadingSummary={teamLoading}
       role={role}
-      onRoleChange={setRole}
+      profileName={profileName}
+      onRoleChange={(nextRole) => {
+        if (allowedRoles.includes(nextRole)) {
+          setRole(nextRole);
+        }
+      }}
+      onLogout={() => logout()}
+      allowedRoles={allowedRoles.length ? allowedRoles : [defaultRole]}
     />
   );
 }

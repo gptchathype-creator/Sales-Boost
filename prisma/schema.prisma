@@ -10,17 +10,194 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+/// Core web identity. This is the future source of truth for auth/RBAC.
+/// Existing Telegram-first flow can keep using `User` until the app layer is migrated.
+model Account {
+  id             String   @id @default(cuid())
+  email          String   @unique
+  passwordHash   String
+  displayName    String?
+  status         String   @default("active") // "active" | "invited" | "disabled"
+  emailVerifiedAt DateTime?
+  lastLoginAt    DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  telegramUsers  User[]
+  telegramLinks  TelegramLink[]
+  telegramLinkCodes TelegramLinkCode[]
+  memberships    AccountMembership[]
+  managerProfiles ManagerProfile[]
+  createdPermissionTemplates PermissionTemplate[] @relation("PermissionTemplateCreatedBy")
+  permissionTemplateAssignments AccountPermissionTemplateAssignment[]
+
+  @@map("accounts")
+}
+
+/// Organizational root: a holding/group of dealerships.
+model Holding {
+  id          String   @id @default(cuid())
+  name        String
+  code        String?  @unique
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  dealerships Dealership[]
+  memberships AccountMembership[]
+
+  @@map("holdings")
+}
+
+/// A single dealership belonging to a holding.
+model Dealership {
+  id          String   @id @default(cuid())
+  holdingId   String?
+  name        String
+  code        String?  @unique
+  city        String?
+  address     String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  holding         Holding?            @relation(fields: [holdingId], references: [id], onDelete: SetNull)
+  memberships     AccountMembership[]
+  managerProfiles ManagerProfile[]
+
+  @@index([holdingId])
+  @@map("dealerships")
+}
+
+/// Business profile of a dealership employee/manager.
+/// Optional links let us migrate gradually from the current Telegram `User` model.
+model ManagerProfile {
+  id              String   @id @default(cuid())
+  dealershipId    String
+  accountId       String?
+  telegramUserId  Int?     @unique
+  fullName        String
+  email           String?
+  phone           String?
+  status          String   @default("active") // "active" | "inactive"
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  dealership      Dealership @relation(fields: [dealershipId], references: [id], onDelete: Cascade)
+  account         Account?   @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  telegramUser    User?      @relation("TelegramUserManagerProfile", fields: [telegramUserId], references: [id], onDelete: SetNull)
+
+  @@index([dealershipId])
+  @@index([accountId])
+  @@map("manager_profiles")
+}
+
+/// Scope-aware role assignment. This is the RBAC layer:
+/// - platform_superadmin => holdingId/dealershipId are null
+/// - holding_admin       => holdingId is set
+/// - dealership_admin    => dealershipId is set
+/// - manager             => dealershipId is set
+model AccountMembership {
+  id           String   @id @default(cuid())
+  accountId    String
+  role         String   // "platform_superadmin" | "holding_admin" | "dealership_admin" | "manager"
+  holdingId    String?
+  dealershipId String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  account      Account    @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  holding      Holding?   @relation(fields: [holdingId], references: [id], onDelete: Cascade)
+  dealership   Dealership? @relation(fields: [dealershipId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, role])
+  @@index([holdingId, role])
+  @@index([dealershipId, role])
+  @@unique([accountId, role, holdingId, dealershipId])
+  @@map("account_memberships")
+}
+
+model PermissionTemplate {
+  id                String   @id @default(cuid())
+  name              String
+  description       String?
+  permissionsJson   String   // JSON array of permission keys
+  isSystem          Boolean  @default(false)
+  createdByAccountId String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  createdBy         Account? @relation("PermissionTemplateCreatedBy", fields: [createdByAccountId], references: [id], onDelete: SetNull)
+  assignments       AccountPermissionTemplateAssignment[]
+
+  @@unique([name])
+  @@index([createdByAccountId])
+  @@map("permission_templates")
+}
+
+model AccountPermissionTemplateAssignment {
+  id          String   @id @default(cuid())
+  accountId   String
+  templateId  String
+  createdAt   DateTime @default(now())
+
+  account     Account            @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  template    PermissionTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, templateId])
+  @@index([accountId])
+  @@index([templateId])
+  @@map("account_permission_template_assignments")
+}
+
+/// Explicit Telegram<->Account binding for a future account-first auth flow.
+/// Kept separate from `User` so the current Telegram bot logic can keep running during migration.
+model TelegramLink {
+  id               String   @id @default(cuid())
+  accountId        String
+  telegramId       String   @unique
+  telegramUsername String?
+  linkedAt         DateTime @default(now())
+  lastSeenAt       DateTime?
+
+  account          Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId])
+  @@map("telegram_links")
+}
+
+/// One-time code to link a logged-in web account with Telegram via the bot.
+model TelegramLinkCode {
+  id          String   @id @default(cuid())
+  accountId   String
+  code        String   @unique
+  purpose     String   @default("link_telegram")
+  expiresAt   DateTime
+  usedAt      DateTime?
+  createdAt   DateTime @default(now())
+
+  account     Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, purpose])
+  @@index([expiresAt])
+  @@map("telegram_link_codes")
+}
+
 model User {
   id              Int      @id @default(autoincrement())
   telegramId      String   @unique
   fullName        String
   role            String   @default("manager") // "manager" | "admin"
   preferencesJson String?  // { replyMode: "text"|"voice", ttsVoice: "male"|"female" }
+  accountId       String?
   createdAt       DateTime @default(now())
 
   attempts         Attempt[]
   trainingSessions TrainingSession[]
+  account          Account? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  managerProfile   ManagerProfile? @relation("TelegramUserManagerProfile")
 
+  @@index([accountId])
   @@map("users")
 }
 

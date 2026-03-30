@@ -2,7 +2,9 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 
 export type SuperAdminTab =
   | 'dashboard'
+  | 'holdings'
   | 'companies'
+  | 'users'
   | 'autodealers'
   | 'audits'
   | 'analytics'
@@ -20,22 +22,27 @@ const SIDEBAR_WIDTH = 260;
 
 const ROLE_LABELS: Record<AdminRole, string> = {
   super: 'Суперадмин',
-  company: 'Холдинг',
-  dealer: 'Автосалон',
-  staff: 'Сотрудник',
+  company: 'Руководитель холдинга',
+  dealer: 'Руководитель автосалона',
+  staff: 'Менеджер',
 };
 
 type NavItem = { id: SuperAdminTab; label: string; icon: React.ReactNode };
 
 const SUPER_NAV: NavItem[] = [
   { id: 'dashboard', label: 'Дашборд', icon: <DashboardIcon /> },
+  { id: 'holdings', label: 'Холдинги', icon: <CompaniesIcon /> },
   { id: 'companies', label: 'Автосалоны', icon: <CompaniesIcon /> },
+  { id: 'users', label: 'Пользователи', icon: <DealersIcon /> },
   { id: 'autodealers', label: 'Сотрудники', icon: <DealersIcon /> },
   { id: 'audits', label: 'Проверки', icon: <AuditsIcon /> },
   { id: 'analytics', label: 'Аналитика', icon: <AnalyticsIcon /> },
 ];
 
+const COMPANY_NAV: NavItem[] = SUPER_NAV.filter((item) => item.id !== 'holdings');
+
 const DEALER_NAV: NavItem[] = [
+  { id: 'dealer-companies', label: 'Автосалон', icon: <CompaniesIcon /> },
   { id: 'dealer-calls', label: 'Звонки', icon: <PhoneIcon /> },
   { id: 'dealer-employees', label: 'Сотрудники', icon: <DealersIcon /> },
   { id: 'dealer-team', label: 'Команда', icon: <AnalyticsIcon /> },
@@ -131,11 +138,14 @@ type Props = {
   activeTab: SuperAdminTab;
   onTab: (tab: SuperAdminTab) => void;
   role: AdminRole;
+  profileName: string;
   onRoleChange: (role: AdminRole) => void;
   hasActiveBatch?: boolean;
+  onLogout: () => void;
+  allowedRoles: AdminRole[];
 };
 
-export function SuperAdminSidebar({ activeTab, onTab, role, onRoleChange, hasActiveBatch = false }: Props) {
+export function SuperAdminSidebar({ activeTab, onTab, role, profileName, onRoleChange, hasActiveBatch = false, onLogout, allowedRoles }: Props) {
   const [profileOpen, setProfileOpen] = useState(false);
   const profileRef = useRef<HTMLDivElement>(null);
 
@@ -153,6 +163,7 @@ export function SuperAdminSidebar({ activeTab, onTab, role, onRoleChange, hasAct
   const navItems = useMemo(() => {
     if (role === 'dealer') return DEALER_NAV;
     if (role === 'staff') return STAFF_NAV;
+    if (role === 'company') return COMPANY_NAV;
     return SUPER_NAV;
   }, [role]);
 
@@ -223,7 +234,7 @@ export function SuperAdminSidebar({ activeTab, onTab, role, onRoleChange, hasAct
 
             <div className="sa-sidebar-role-section">
               <div className="sa-sidebar-role-label">Сменить роль (MVP)</div>
-              {(['super', 'company', 'dealer', 'staff'] as AdminRole[]).map((r) => (
+              {allowedRoles.map((r) => (
                 <button
                   key={r}
                   type="button"
@@ -239,6 +250,18 @@ export function SuperAdminSidebar({ activeTab, onTab, role, onRoleChange, hasAct
                 </button>
               ))}
             </div>
+
+            <button
+              type="button"
+              className="sa-sidebar-profile-menu-item"
+              onClick={() => {
+                onLogout();
+                setProfileOpen(false);
+              }}
+            >
+              <span>⇠</span>
+              <span>Выйти</span>
+            </button>
           </div>
         )}
 
@@ -251,7 +274,7 @@ export function SuperAdminSidebar({ activeTab, onTab, role, onRoleChange, hasAct
             <ProfileIcon />
           </div>
           <div className="sa-sidebar-profile-info">
-            <div className="sa-sidebar-profile-name">Администратор</div>
+            <div className="sa-sidebar-profile-name">{profileName}</div>
             <div className="sa-sidebar-profile-role">{ROLE_LABELS[role]}</div>
           </div>
           <span className="sa-sidebar-profile-chevron">{profileOpen ? '▲' : '▼'}</span>
