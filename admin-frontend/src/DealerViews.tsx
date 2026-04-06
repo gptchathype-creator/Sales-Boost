@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { apiFetch } from './auth/api';
+import { CallInsightCard, type CallInsightDetail } from './CallInsightCard';
 import {
   Card,
   CardBody,
@@ -30,21 +31,7 @@ type CallSummary = {
   hasEvaluation: boolean;
 };
 
-type CallDetail = {
-  id: number;
-  to: string;
-  startedAt: string | null;
-  endedAt: string | null;
-  outcome: string | null;
-  durationSec: number | null;
-  totalScore: number | null;
-  qualityTag: string | null;
-  strengths: string[];
-  weaknesses: string[];
-  recommendations: string[];
-  transcript: { role: 'client' | 'manager'; text: string }[];
-  dimensionScores?: Record<string, number> | null;
-};
+type CallDetail = CallInsightDetail;
 
 type AttemptDetail = {
   id: number;
@@ -106,8 +93,6 @@ type ExpensesInfo = {
   billingUrl: string;
 };
 
-<<<<<<< HEAD
-=======
 type ScopedDealership = {
   id: string;
   name: string;
@@ -117,8 +102,6 @@ type ScopedDealership = {
   managersCount: number;
   isActive: boolean;
 };
-
->>>>>>> d6c9dfa (dev version with RBAC and auth)
 const isDevHost =
   typeof window !== 'undefined' &&
   (window.location.hostname === 'localhost' ||
@@ -290,39 +273,6 @@ function buildMockAttemptDetail(attempt: Attempt): AttemptDetail {
   };
 }
 
-<<<<<<< HEAD
-const mockHoldingDealers = [
-  {
-    id: 'dealer-1',
-    name: 'Автосалон Север‑1',
-    city: 'Москва',
-    aiScore: 84.2,
-    conversion: 12.5,
-    answered: 78,
-    managers: 11,
-  },
-  {
-    id: 'dealer-2',
-    name: 'Автосалон Север‑2',
-    city: 'Москва',
-    aiScore: 79.3,
-    conversion: 9.8,
-    answered: 71,
-    managers: 8,
-  },
-  {
-    id: 'dealer-3',
-    name: 'Автосалон Север‑СПб',
-    city: 'Санкт‑Петербург',
-    aiScore: 87.6,
-    conversion: 15.2,
-    answered: 83,
-    managers: 6,
-  },
-];
-
-=======
->>>>>>> d6c9dfa (dev version with RBAC and auth)
 /* ─────────────────────────────────────────────────────────────────────── */
 /*  Sub-components (copied exactly from old App.tsx)                      */
 /* ─────────────────────────────────────────────────────────────────────── */
@@ -352,11 +302,7 @@ function EmployeesTab(props: {
       } else {
         url = `${API_BASE}/api/admin/attempts/${attempt.id}`;
       }
-<<<<<<< HEAD
-      const res = await fetch(url);
-=======
       const res = await apiFetch(url);
->>>>>>> d6c9dfa (dev version with RBAC and auth)
       if (!res.ok) {
         if (isDevHost) {
           setDetail(buildMockAttemptDetail(attempt));
@@ -596,11 +542,7 @@ function CallsTab(props: {
     async function loadSaved() {
       setSavedNumbersLoading(true);
       try {
-<<<<<<< HEAD
-        const res = await fetch(`${API_BASE}/api/admin/test-numbers`);
-=======
         const res = await apiFetch(`${API_BASE}/api/admin/test-numbers`);
->>>>>>> d6c9dfa (dev version with RBAC and auth)
         if (!res.ok) { if (!cancelled) setSavedNumbersLoading(false); return; }
         const text = await res.text();
         const data = text ? JSON.parse(text) : {};
@@ -640,90 +582,7 @@ function CallsTab(props: {
                 Ошибка: {callDetailError}
               </div>
             ) : callDetail ? (
-              <div className="rounded-2xl admin-card-inner px-4 py-3 space-y-3">
-                <div className="flex justify-between items-center">
-                  <div className="font-semibold text-sm">{callDetail.to}</div>
-                  {callDetail.qualityTag && (
-                    <span className="text-[11px] px-2 py-1 rounded-full admin-badge-neutral">
-                      {callDetail.qualityTag}
-                    </span>
-                  )}
-                </div>
-                <div className="text-2xl font-bold">
-                  {callDetail.totalScore != null ? `${callDetail.totalScore.toFixed(1)}/100` : 'Н/Д'}
-                </div>
-                <div className="text-xs text-default-500 space-y-1">
-                  <div>Исход: {callDetail.outcome ?? '—'}</div>
-                  <div>
-                    Начало: {callDetail.startedAt ? new Date(callDetail.startedAt).toLocaleString('ru-RU') : '—'}
-                  </div>
-                  <div>
-                    Конец: {callDetail.endedAt ? new Date(callDetail.endedAt).toLocaleString('ru-RU') : '—'}
-                  </div>
-                </div>
-                {callDetail.dimensionScores && (
-                  <div>
-                    <div className="text-xs font-semibold mb-1">Ключевые показатели</div>
-                    <div className="space-y-2">
-                      {Object.entries(callDetail.dimensionScores).map(([key, value]) => {
-                        const v = typeof value === 'number' ? value : 0;
-                        const norm = v <= 1 ? v * 10 : v;
-                        const pct = Math.max(0, Math.min(10, norm)) * 10;
-                        const color =
-                          norm >= 8 ? 'bg-emerald-500' : norm >= 5 ? 'bg-amber-500' : 'bg-rose-500';
-                        const label = key.replace(/_/g, ' ');
-                        return (
-                          <div key={key} className="space-y-1">
-                            <div className="flex justify-between text-[11px] text-default-500">
-                              <span>{label}</span>
-                              <span>{norm.toFixed(1)}/10</span>
-                            </div>
-                            <div className="h-1.5 rounded-full admin-progress-track overflow-hidden">
-                              <div className={`h-full ${color}`} style={{ width: `${pct}%` }} />
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-                <div>
-                  <div className="text-xs font-semibold mb-1">✅ Сильные стороны</div>
-                  {callDetail.strengths?.length ? (
-                    <ul className="text-xs text-default-500 list-disc pl-4 space-y-1">
-                      {callDetail.strengths.map((s, i) => (
-                        <li key={i}>{s}</li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p className="text-xs text-default-500">Нет выделенных сильных сторон.</p>
-                  )}
-                </div>
-                <div>
-                  <div className="text-xs font-semibold mb-1">⚠️ Слабые стороны</div>
-                  {callDetail.weaknesses?.length ? (
-                    <ul className="text-xs text-default-500 list-disc pl-4 space-y-1">
-                      {callDetail.weaknesses.map((w, i) => (
-                        <li key={i}>{w}</li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p className="text-xs text-default-500">Слабые стороны не выделены.</p>
-                  )}
-                </div>
-                <div>
-                  <div className="text-xs font-semibold mb-1">💡 Рекомендации</div>
-                  {callDetail.recommendations?.length ? (
-                    <ul className="text-xs text-default-500 list-disc pl-4 space-y-1">
-                      {callDetail.recommendations.map((r, i) => (
-                        <li key={i}>{r}</li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p className="text-xs text-default-500">Отдельных рекомендаций нет.</p>
-                  )}
-                </div>
-              </div>
+              <CallInsightCard detail={callDetail} />
             ) : null}
           </CardBody>
         </Card>
@@ -1060,8 +919,6 @@ function TeamTab(props: { loading: boolean; error: string | null; summary: TeamS
 }
 
 function DealerCompaniesTab() {
-<<<<<<< HEAD
-=======
   const [items, setItems] = useState<ScopedDealership[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1093,19 +950,10 @@ function DealerCompaniesTab() {
     };
   }, []);
 
->>>>>>> d6c9dfa (dev version with RBAC and auth)
   return (
     <div className="space-y-3">
       <Card shadow="sm" className="admin-card-light">
         <CardBody>
-<<<<<<< HEAD
-          <div className="text-sm font-semibold mb-1">Компании</div>
-          <p className="text-xs text-default-500 mb-3">
-            Список компаний и точек. В проде здесь будут реальные данные холдинга.
-          </p>
-          <div className="space-y-2 text-xs">
-            {mockHoldingDealers.map((d) => (
-=======
           <div className="text-sm font-semibold mb-1">Автосалон</div>
           <p className="text-xs text-default-500 mb-3">
             Реальные данные по доступным автосалонам из org-структуры.
@@ -1114,23 +962,12 @@ function DealerCompaniesTab() {
           {error && <div className="text-xs text-danger">{error}</div>}
           <div className="space-y-2 text-xs">
             {items.map((d) => (
->>>>>>> d6c9dfa (dev version with RBAC and auth)
               <div
                 key={d.id}
                 className="rounded-md admin-card-inner p-2 flex justify-between gap-3"
               >
                 <div className="min-w-0">
                   <div className="font-semibold truncate">{d.name}</div>
-<<<<<<< HEAD
-                  <div className="text-[11px] text-default-500">Город: {d.city} · Менеджеров: {d.managers}</div>
-                </div>
-                <div className="text-right text-[11px]">
-                  <div className="text-xs text-default-500">AI‑рейтинг</div>
-                  <div className="text-lg font-semibold">{d.aiScore.toFixed(1)}/100</div>
-                </div>
-              </div>
-            ))}
-=======
                   <div className="text-[11px] text-default-500">
                     Город: {d.city || '—'} · Холдинг: {d.holdingName || 'Без холдинга'} · Менеджеров: {d.managersCount}
                   </div>
@@ -1147,7 +984,6 @@ function DealerCompaniesTab() {
             {!loading && !error && items.length === 0 && (
               <div className="text-xs text-default-500">Нет доступных автосалонов.</div>
             )}
->>>>>>> d6c9dfa (dev version with RBAC and auth)
           </div>
         </CardBody>
       </Card>
@@ -1202,11 +1038,7 @@ export function DealerContent(props: { summary: any; voice: any; loadingSummary:
 
   async function safeFetchJson(url: string): Promise<any> {
     try {
-<<<<<<< HEAD
-      const res = await fetch(url);
-=======
       const res = await apiFetch(url);
->>>>>>> d6c9dfa (dev version with RBAC and auth)
       if (!res.ok) return null;
       const text = await res.text();
       if (!text) return null;
@@ -1298,11 +1130,7 @@ export function DealerContent(props: { summary: any; voice: any; loadingSummary:
     setStartCallLoading(true);
     setStartCallStatus('Инициируем звонок...');
     try {
-<<<<<<< HEAD
-      const res = await fetch(`${API_BASE}/api/admin/start-voice-call`, {
-=======
       const res = await apiFetch(`${API_BASE}/api/admin/start-voice-call`, {
->>>>>>> d6c9dfa (dev version with RBAC and auth)
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ to: phone.trim(), scenario: 'realtime_pure' }),

@@ -55,6 +55,14 @@ export async function finalizeVoiceCallSession(payload: VoxWebhookPayload): Prom
   const endedAt = new Date();
   const durationSec = record ? Math.round((endedAt.getTime() - startedAt.getTime()) / 1000) : 0;
   const outcome = normalizeOutcome(event, payload.details);
+  console.log('[voice/session] finalize start', {
+    callId,
+    event,
+    to,
+    hasPayloadTranscript: Array.isArray(payload.transcript) ? payload.transcript.length : 0,
+    hasMemoryTranscript: record?.transcript?.length ?? 0,
+    voxSessionId: payload.vox_session_id ?? null,
+  });
 
   // Prefer transcript from webhook payload (e.g. realtime_pure sends it); fallback to in-memory record (dialog scenario)
   const rawPayloadTranscript = payload.transcript;
@@ -126,41 +134,57 @@ export async function finalizeVoiceCallSession(payload: VoxWebhookPayload): Prom
 
   console.log('[voice/session] transcript', { callId, source: transcriptSource, turns: transcript.length });
 
-  // 3) Run evaluation (can take time) and update session when ready
-  if (transcript.length >= 2) {
+  if (transcript.length < 2) {
+    const reason =
+      transcript.length === 0
+        ? 'Transcript unavailable: webhook payload empty and Vox log returned no transcript.'
+        : `Transcript too short for evaluation: ${transcript.length} turn(s).`;
+    console.warn('[voice/session] transcript insufficient', { callId, source: transcriptSource, reason });
     try {
-      const car = loadCar();
-      const state = getDefaultState('normal');
-      const dialogHistory = dialogHistoryFromTranscript(transcript);
-      const { evaluation } = await evaluateSessionV2({
-        dialogHistory,
-        car,
-        state,
-        earlyFail: false,
-        behaviorSignals: [],
-      });
-
-      const evaluationJson = JSON.stringify(evaluation);
-      const totalScore = evaluation.overall_score_0_100 ?? null;
-
       await prisma.voiceCallSession.update({
         where: { callId },
-        data: {
-          evaluationJson,
-          totalScore,
-          failureReason: null,
-        },
+        data: { failureReason: reason.slice(0, 200) },
       });
-      console.log('[voice/session] evaluation saved', { callId, totalScore });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error('[voice/session] evaluateSessionV2 error:', msg);
-      try {
-        await prisma.voiceCallSession.update({
-          where: { callId },
-          data: { failureReason: msg.slice(0, 200) },
-        });
-      } catch (_) {}
+      console.warn('[voice/session] failed to save transcript failureReason:', err instanceof Error ? err.message : err);
     }
+    return;
+  }
+
+  // 3) Run evaluation (can take time) and update session when ready
+  try {
+    const car = loadCar();
+    const state = getDefaultState('normal');
+    const dialogHistory = dialogHistoryFromTranscript(transcript);
+    console.log('[voice/session] evaluation start', { callId, turns: transcript.length });
+    const { evaluation } = await evaluateSessionV2({
+      dialogHistory,
+      car,
+      state,
+      earlyFail: false,
+      behaviorSignals: [],
+    });
+
+    const evaluationJson = JSON.stringify(evaluation);
+    const totalScore = evaluation.overall_score_0_100 ?? null;
+
+    await prisma.voiceCallSession.update({
+      where: { callId },
+      data: {
+        evaluationJson,
+        totalScore,
+        failureReason: null,
+      },
+    });
+    console.log('[voice/session] evaluation saved', { callId, totalScore });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[voice/session] evaluateSessionV2 error:', msg);
+    try {
+      await prisma.voiceCallSession.update({
+        where: { callId },
+        data: { failureReason: msg.slice(0, 200) },
+      });
+    } catch (_) {}
   }
 }

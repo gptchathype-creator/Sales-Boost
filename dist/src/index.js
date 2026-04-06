@@ -14,6 +14,7 @@ const server_1 = require("./server");
 const tunnel_1 = require("./tunnel");
 const bot_1 = require("./bot");
 const tts_1 = require("./voice/tts");
+const startVoiceCall_1 = require("./voice/startVoiceCall");
 const bot = new telegraf_1.Telegraf(config_1.config.botToken);
 // Registration scene (prompt is sent from /start handler before entering)
 const registrationScene = new telegraf_1.Scenes.BaseScene('registration');
@@ -342,7 +343,9 @@ async function main() {
                 if (!clean)
                     return;
                 config_1.config.miniAppUrl = clean;
+                const voiceUrls = (0, startVoiceCall_1.resolveVoiceCallUrls)();
                 console.log('[TUNNEL] ' + clean);
+                console.log('[TUNNEL] Vox webhook event_url: ' + (voiceUrls.eventUrl || '(not resolved)'));
                 console.log('        Админ-панель готова. Нажмите /admin → «Открыть Админ-панель».');
             };
             (0, tunnel_1.startTunnel)(onTunnelUrl).then((url) => {

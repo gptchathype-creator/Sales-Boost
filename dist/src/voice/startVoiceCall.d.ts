@@ -17,5 +17,12 @@ export interface StartVoiceCallResult {
 export interface StartVoiceCallError {
     error: string;
 }
+export interface VoiceCallResolvedUrls {
+    tunnelUrl: string;
+    baseUrl: string;
+    eventUrlBase: string;
+    eventUrl: string;
+}
+export declare function resolveVoiceCallUrls(): VoiceCallResolvedUrls;
 export declare function startVoiceCall(to: string, options?: StartVoiceCallOptions): Promise<StartVoiceCallResult | StartVoiceCallError>;
 //# sourceMappingURL=startVoiceCall.d.ts.map

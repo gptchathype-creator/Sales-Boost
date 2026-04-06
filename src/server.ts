@@ -12,7 +12,7 @@ import { fileURLToPath } from 'url';
 import { handleVoiceDialog } from './voice/voiceDialog';
 import { handleVoiceStreamMessage } from './voice/voiceStream';
 import { addCall, getCallHistory, getTestNumbers } from './voice/callHistory';
-import { startVoiceCall } from './voice/startVoiceCall';
+import { resolveVoiceCallUrls, startVoiceCall } from './voice/startVoiceCall';
 import { finalizeVoiceCallSession } from './voice/voiceCallSession';
 import {
   cancelCallBatch,
@@ -449,6 +449,71 @@ function sendErrorHtml(res: express.Response, status: number, title: string, mes
 <p style="color:#888;font-size:14px;">Проверьте, что бот запущен (npm run dev) и туннель активен. Откройте /admin в боте снова.</p>
 </body></html>
   `);
+}
+
+function buildVoiceCallDetailResponse(session: {
+  id: number;
+  callId: string;
+  to: string;
+  scenario: string | null;
+  startedAt: Date;
+  endedAt: Date | null;
+  outcome: string | null;
+  durationSec: number | null;
+  transcriptJson: string | null;
+  evaluationJson: string | null;
+  totalScore: number | null;
+  failureReason: string | null;
+}) {
+  const transcript = session.transcriptJson
+    ? (JSON.parse(session.transcriptJson) as Array<{ role: string; text: string }>)
+    : [];
+  let evaluation: Record<string, unknown> | null = null;
+  if (session.evaluationJson) {
+    try {
+      evaluation = JSON.parse(session.evaluationJson) as Record<string, unknown>;
+    } catch (_) {}
+  }
+  const score = session.totalScore ?? (evaluation && typeof (evaluation as any).overall_score_0_100 === 'number'
+    ? (evaluation as any).overall_score_0_100
+    : null);
+  const checklist = evaluation && Array.isArray((evaluation as any).checklist) ? (evaluation as any).checklist : [];
+  const issues = evaluation && Array.isArray((evaluation as any).issues) ? (evaluation as any).issues : [];
+  const recommendations = evaluation && Array.isArray((evaluation as any).recommendations) ? (evaluation as any).recommendations : [];
+  const dimensionScores = evaluation && (evaluation as any).dimension_scores ? (evaluation as any).dimension_scores : null;
+  const qualityTag = score != null ? (score >= 76 ? 'Хорошо' : score >= 50 ? 'Средне' : 'Плохо') : null;
+  const ended = !!session.endedAt;
+  const hasEval = !!session.evaluationJson;
+  const endedAtMs = session.endedAt ? session.endedAt.getTime() : null;
+  const ageSec = endedAtMs != null ? (Date.now() - endedAtMs) / 1000 : null;
+  const isRecent = ageSec != null && ageSec >= 0 && ageSec < 120;
+  const isProcessing = ended && !hasEval && !session.failureReason && (transcript.length >= 2 || isRecent);
+  const processingStage = !ended || hasEval || !isProcessing ? null : (transcript.length >= 2 ? 'evaluation' : 'transcript');
+
+  return {
+    id: session.id,
+    callId: session.callId,
+    to: session.to,
+    scenario: session.scenario,
+    startedAt: session.startedAt,
+    endedAt: session.endedAt,
+    outcome: session.outcome,
+    durationSec: session.durationSec,
+    transcript,
+    transcriptTurns: transcript.length,
+    hasEvaluation: !!session.evaluationJson,
+    isProcessing,
+    processingStage,
+    processingError: session.failureReason,
+    totalScore: score,
+    qualityTag,
+    dimensionScores,
+    checklist,
+    issues,
+    recommendations,
+    strengths: checklist.filter((c: any) => c.status === 'YES').map((c: any) => c.comment || c.code),
+    weaknesses: issues.map((i: any) => (i.recommendation || i.issue_type) || ''),
+  };
 }
 
 // Health check: verify server is running (e.g. curl http://localhost:3000/health)
@@ -1926,6 +1991,58 @@ app.post('/api/admin/start-voice-call', async (req, res) => {
   }
 });
 
+app.post('/api/public/demo-call/start', async (req, res) => {
+  try {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const toRaw = body.to != null ? String(body.to).trim() : '';
+    if (!toRaw) {
+      return res.status(400).json({ error: 'Введите номер телефона.' });
+    }
+    const scenario = body.scenario === 'dialog' || body.scenario === 'realtime'
+      ? body.scenario
+      : 'realtime_pure';
+    const result = await startVoiceCall(toRaw, { scenario });
+    if ('error' in result) {
+      return res.status(400).json({ error: result.error });
+    }
+    addCall(result.callId, toRaw);
+    const toNormalized = '+' + String(toRaw).replace(/\D/g, '');
+    try {
+      await prisma.voiceCallSession.create({
+        data: {
+          callId: result.callId,
+          to: toNormalized,
+          scenario: result.scenario ?? 'realtime_pure',
+          startedAt: new Date(result.startedAt),
+        },
+      });
+    } catch (e) {
+      console.warn('[demo-call] VoiceCallSession create (may already exist):', e instanceof Error ? e.message : e);
+    }
+    res.json({ callId: result.callId, startedAt: result.startedAt, to: toRaw, scenario: result.scenario });
+  } catch (err) {
+    console.error('public demo-call/start error:', err);
+    res.status(500).json({ error: 'Не удалось запустить звонок.' });
+  }
+});
+
+app.get('/api/public/demo-call/:callId', async (req, res) => {
+  try {
+    const callId = String(req.params.callId || '').trim();
+    if (!callId) {
+      return res.status(400).json({ error: 'Missing callId.' });
+    }
+    const session = await prisma.voiceCallSession.findUnique({ where: { callId } });
+    if (!session) {
+      return res.status(404).json({ error: 'Звонок не найден.' });
+    }
+    res.json(buildVoiceCallDetailResponse(session));
+  } catch (err) {
+    console.error('public demo-call/:callId error:', err);
+    res.status(500).json({ error: 'Не удалось получить статус звонка.' });
+  }
+});
+
 // Admin: create batch call orchestration job
 app.post('/api/admin/call-batches', async (req, res) => {
   try {
@@ -2062,13 +2179,40 @@ app.post('/api/admin/call-batches/:id/cancel', async (req, res) => {
   }
 });
 
+app.use('/webhooks/vox', (req, _res, next) => {
+  const body = req.body && typeof req.body === 'object' ? req.body : null;
+  console.log('[webhooks/vox] request', {
+    method: req.method,
+    path: req.path,
+    ip: req.ip,
+    userAgent: req.get('user-agent') || null,
+    contentType: req.get('content-type') || null,
+    bodyKeys: body ? Object.keys(body) : [],
+  });
+  next();
+});
+
+app.get('/webhooks/vox', (_req, res) => {
+  res.status(200).json({
+    ok: true,
+    message: 'Voximplant webhook endpoint is alive. Expected method: POST.',
+  });
+});
+
 // Voximplant webhook: call events (disconnected, failed, no_answer, busy)
 app.post('/webhooks/vox', async (req, res) => {
   res.status(200).end();
   const payload = req.body && typeof req.body === 'object' ? req.body : {};
   const event = payload.event || payload.event_type;
   const hasTranscript = Array.isArray(payload.transcript);
-  console.log('[webhooks/vox] received', { event, callId: payload.call_id, keys: Object.keys(payload), transcriptTurns: hasTranscript ? payload.transcript.length : 0 });
+  console.log('[webhooks/vox] received', {
+    event,
+    callId: payload.call_id,
+    to: payload.to ?? null,
+    voxSessionId: payload.vox_session_id ?? null,
+    keys: Object.keys(payload),
+    transcriptTurns: hasTranscript ? payload.transcript.length : 0,
+  });
   if (['disconnected', 'failed', 'no_answer', 'busy'].includes(event)) {
     finalizeVoiceCallSession(payload).catch((err) => {
       console.error('[webhooks/vox] finalizeVoiceCallSession error:', err instanceof Error ? err.message : err);
@@ -2139,61 +2283,7 @@ app.get('/api/admin/call-history/:id', async (req, res) => {
     if (!session) {
       return res.status(404).json({ error: 'Session not found' });
     }
-    const transcript = session.transcriptJson
-      ? (JSON.parse(session.transcriptJson) as Array<{ role: string; text: string }>)
-      : [];
-    let evaluation: Record<string, unknown> | null = null;
-    if (session.evaluationJson) {
-      try {
-        evaluation = JSON.parse(session.evaluationJson) as Record<string, unknown>;
-      } catch (_) {}
-    }
-    const score = session.totalScore ?? (evaluation && typeof (evaluation as any).overall_score_0_100 === 'number' ? (evaluation as any).overall_score_0_100 : null);
-    const checklist = evaluation && Array.isArray((evaluation as any).checklist) ? (evaluation as any).checklist : [];
-    const issues = evaluation && Array.isArray((evaluation as any).issues) ? (evaluation as any).issues : [];
-    const recommendations = evaluation && Array.isArray((evaluation as any).recommendations) ? (evaluation as any).recommendations : [];
-    const dimensionScores = evaluation && (evaluation as any).dimension_scores ? (evaluation as any).dimension_scores : null;
-    const qualityTag = score != null ? (score >= 76 ? 'Хорошо' : score >= 50 ? 'Средне' : 'Плохо') : null;
-    res.json({
-      id: session.id,
-      callId: session.callId,
-      to: session.to,
-      scenario: session.scenario,
-      startedAt: session.startedAt,
-      endedAt: session.endedAt,
-      outcome: session.outcome,
-      durationSec: session.durationSec,
-      transcript,
-      transcriptTurns: transcript.length,
-      hasEvaluation: !!session.evaluationJson,
-      isProcessing: (() => {
-        const ended = !!session.endedAt;
-        const hasEval = !!session.evaluationJson;
-        const endedAtMs = session.endedAt ? session.endedAt.getTime() : null;
-        const ageSec = endedAtMs != null ? (Date.now() - endedAtMs) / 1000 : null;
-        const isRecent = ageSec != null && ageSec >= 0 && ageSec < 120;
-        return ended && !hasEval && !session.failureReason && (transcript.length >= 2 || isRecent);
-      })(),
-      processingStage: (() => {
-        const ended = !!session.endedAt;
-        const hasEval = !!session.evaluationJson;
-        const endedAtMs = session.endedAt ? session.endedAt.getTime() : null;
-        const ageSec = endedAtMs != null ? (Date.now() - endedAtMs) / 1000 : null;
-        const isRecent = ageSec != null && ageSec >= 0 && ageSec < 120;
-        const isProcessing = ended && !hasEval && !session.failureReason && (transcript.length >= 2 || isRecent);
-        if (!ended || hasEval || !isProcessing) return null;
-        return transcript.length >= 2 ? 'evaluation' : 'transcript';
-      })(),
-      processingError: session.failureReason,
-      totalScore: score,
-      qualityTag,
-      dimensionScores,
-      checklist,
-      issues,
-      recommendations,
-      strengths: checklist.filter((c: any) => c.status === 'YES').map((c: any) => c.comment || c.code),
-      weaknesses: issues.map((i: any) => (i.recommendation || i.issue_type) || ''),
-    });
+    res.json(buildVoiceCallDetailResponse(session));
   } catch (err) {
     console.error('call-history/:id error:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -2468,6 +2558,7 @@ app.get('/api/admin/super-admin/settings', async (_req, res) => {
 // Fallback: for any non-API GET request, serve Mini App (so /index.html etc. work)
 app.get('*', (req, res, next) => {
   if (req.path.startsWith('/api/')) return next();
+  if (req.path.startsWith('/webhooks/')) return next();
   if (INDEX_HTML_PATH) {
     try {
       return sendIndexHtml(res);
@@ -2482,6 +2573,9 @@ app.get('*', (req, res, next) => {
 app.use((req, res) => {
   if (req.path.startsWith('/api/')) {
     return res.status(404).json({ error: 'Маршрут не найден', path: req.path });
+  }
+  if (req.path.startsWith('/webhooks/')) {
+    return res.status(404).json({ error: 'Webhook route not found', path: req.path });
   }
   sendErrorHtml(
     res,
@@ -2584,10 +2678,12 @@ export function startServer(): Promise<void> {
       attachVoiceStream(httpServer);
       httpServer.on('error', onError);
       httpServer.listen(port, host, () => {
+        const voiceUrls = resolveVoiceCallUrls();
         console.log('[OK] HTTP server: http://localhost:' + port);
         console.log('     Open in browser: http://localhost:' + port);
         console.log('     Health: http://localhost:' + port + '/health');
         console.log('     Voice stream: ws://localhost:' + port + '/voice/stream');
+        console.log('     Vox webhook event_url: ' + (voiceUrls.eventUrl || '(not resolved)'));
         if (useTunnel) {
           console.log('     Tunnel will provide HTTPS for Telegram.');
         }
