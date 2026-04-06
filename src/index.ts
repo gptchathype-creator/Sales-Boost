@@ -12,6 +12,7 @@ import { startServer } from './server';
 import { startTunnel } from './tunnel';
 import { registerManagerMessageHandlers } from './bot';
 import { isTtsEnabled } from './voice/tts';
+import { resolveVoiceCallUrls } from './voice/startVoiceCall';
 
 const bot = new Telegraf(config.botToken);
 
@@ -366,7 +367,9 @@ async function main() {
         const clean = (url || '').trim().replace(/\/+$/, '');
         if (!clean) return;
         (config as any).miniAppUrl = clean;
+        const voiceUrls = resolveVoiceCallUrls();
         console.log('[TUNNEL] ' + clean);
+        console.log('[TUNNEL] Vox webhook event_url: ' + (voiceUrls.eventUrl || '(not resolved)'));
         console.log('        Админ-панель готова. Нажмите /admin → «Открыть Админ-панель».');
       };
       startTunnel(onTunnelUrl).then((url) => {

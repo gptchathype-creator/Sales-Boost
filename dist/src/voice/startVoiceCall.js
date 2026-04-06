@@ -6,6 +6,7 @@
  * In dev, prefers live tunnel URL from getTunnelUrl() so dialog_url is always current.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.resolveVoiceCallUrls = resolveVoiceCallUrls;
 exports.startVoiceCall = startVoiceCall;
 const undici_1 = require("undici");
 const node_crypto_1 = require("node:crypto");
@@ -15,14 +16,19 @@ function normalizePhone(v) {
     const digits = String(v).replace(/\D/g, '');
     return digits ? '+' + digits : v;
 }
+function resolveVoiceCallUrls() {
+    const tunnelUrl = (0, tunnel_1.getTunnelUrl)()?.replace(/\/$/, '') || '';
+    const baseUrl = (tunnelUrl || process.env.VOICE_DIALOG_BASE_URL || process.env.MINI_APP_URL || '').replace(/\/$/, '');
+    const eventUrlBase = (tunnelUrl || process.env.PUBLIC_BASE_URL || process.env.MINI_APP_URL || baseUrl).replace(/\/$/, '');
+    const eventUrl = eventUrlBase ? `${eventUrlBase}/webhooks/vox` : '';
+    return { tunnelUrl, baseUrl, eventUrlBase, eventUrl };
+}
 async function startVoiceCall(to, options = {}) {
     const { scenario = 'dialog' } = options;
     const accountId = process.env.VOX_ACCOUNT_ID;
     const apiKey = process.env.VOX_API_KEY;
     const appId = process.env.VOX_APP_ID;
-    const tunnelLive = (0, tunnel_1.getTunnelUrl)()?.replace(/\/$/, '') || '';
-    const baseUrl = (tunnelLive || process.env.VOICE_DIALOG_BASE_URL || process.env.MINI_APP_URL || '').replace(/\/$/, '');
-    const eventUrlBase = tunnelLive || process.env.PUBLIC_BASE_URL || process.env.MINI_APP_URL || baseUrl;
+    const { baseUrl, eventUrl } = resolveVoiceCallUrls();
     if (!accountId || !apiKey || !appId) {
         return { error: 'VOX_ACCOUNT_ID, VOX_API_KEY, VOX_APP_ID must be set in env.' };
     }
@@ -31,7 +37,6 @@ async function startVoiceCall(to, options = {}) {
         return { error: 'Invalid phone number.' };
     }
     const callId = (0, node_crypto_1.randomUUID)();
-    const eventUrl = eventUrlBase ? `${eventUrlBase.replace(/\/$/, '')}/webhooks/vox` : '';
     let scriptName;
     let ruleName;
     let customData;

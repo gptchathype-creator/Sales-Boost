@@ -33,6 +33,21 @@ export interface StartVoiceCallError {
   error: string;
 }
 
+export interface VoiceCallResolvedUrls {
+  tunnelUrl: string;
+  baseUrl: string;
+  eventUrlBase: string;
+  eventUrl: string;
+}
+
+export function resolveVoiceCallUrls(): VoiceCallResolvedUrls {
+  const tunnelUrl = getTunnelUrl()?.replace(/\/$/, '') || '';
+  const baseUrl = (tunnelUrl || process.env.VOICE_DIALOG_BASE_URL || process.env.MINI_APP_URL || '').replace(/\/$/, '');
+  const eventUrlBase = (tunnelUrl || process.env.PUBLIC_BASE_URL || process.env.MINI_APP_URL || baseUrl).replace(/\/$/, '');
+  const eventUrl = eventUrlBase ? `${eventUrlBase}/webhooks/vox` : '';
+  return { tunnelUrl, baseUrl, eventUrlBase, eventUrl };
+}
+
 export async function startVoiceCall(
   to: string,
   options: StartVoiceCallOptions = {}
@@ -41,9 +56,7 @@ export async function startVoiceCall(
   const accountId = process.env.VOX_ACCOUNT_ID;
   const apiKey = process.env.VOX_API_KEY;
   const appId = process.env.VOX_APP_ID;
-  const tunnelLive = getTunnelUrl()?.replace(/\/$/, '') || '';
-  const baseUrl = (tunnelLive || process.env.VOICE_DIALOG_BASE_URL || process.env.MINI_APP_URL || '').replace(/\/$/, '');
-  const eventUrlBase = tunnelLive || process.env.PUBLIC_BASE_URL || process.env.MINI_APP_URL || baseUrl;
+  const { baseUrl, eventUrl } = resolveVoiceCallUrls();
 
   if (!accountId || !apiKey || !appId) {
     return { error: 'VOX_ACCOUNT_ID, VOX_API_KEY, VOX_APP_ID must be set in env.' };
@@ -54,7 +67,6 @@ export async function startVoiceCall(
   }
 
   const callId = randomUUID();
-  const eventUrl = eventUrlBase ? `${eventUrlBase.replace(/\/$/, '')}/webhooks/vox` : '';
 
   let scriptName: string;
   let ruleName: string;
