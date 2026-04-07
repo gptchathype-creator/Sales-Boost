@@ -17,6 +17,8 @@ export interface VoxWebhookPayload {
     transcript?: TranscriptTurn[] | unknown[];
     /** Voximplant session id (from AppEvents.Started) — used to fetch session log and parse transcript if not sent */
     vox_session_id?: number;
+    /** Some Vox scenarios send vox_call_id instead of vox_session_id (call session history id). */
+    vox_call_id?: number | string;
 }
 /**
  * Called when Vox sends event (e.g. disconnected). Persists session and runs evaluation if we have transcript.

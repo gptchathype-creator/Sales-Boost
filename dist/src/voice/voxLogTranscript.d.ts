@@ -8,6 +8,7 @@ import type { TranscriptTurn } from './callHistory';
 export interface GetTranscriptFromVoxLogResult {
     transcript: TranscriptTurn[];
     source: 'vox_log';
+    error?: 'missing_api_keys' | 'get_call_history_failed' | 'no_log_url' | 'log_unauthorized' | 'log_fetch_failed';
 }
 /**
  * Call Voximplant GetCallHistory for the given session id, fetch log_file_url, parse log for transcript.

@@ -13,6 +13,8 @@ export interface VoiceCallRecord {
   to: string;
   startedAt: string; // ISO
   transcript: TranscriptTurn[];
+  /** Voximplant call session history id (used to fetch logs/transcripts). */
+  voxSessionId?: number | null;
 }
 
 const MAX_HISTORY = 100;
@@ -30,6 +32,7 @@ export function addCall(callId: string, to: string): void {
     to: normalizePhone(to),
     startedAt: new Date().toISOString(),
     transcript: [],
+    voxSessionId: null,
   };
   byCallId.set(callId, record);
   calls.unshift(record);
@@ -37,6 +40,13 @@ export function addCall(callId: string, to: string): void {
     const removed = calls.pop();
     if (removed) byCallId.delete(removed.callId);
   }
+}
+
+export function setVoxSessionId(callId: string, voxSessionId: number): void {
+  const record = byCallId.get(callId);
+  if (!record) return;
+  if (!Number.isFinite(voxSessionId) || voxSessionId <= 0) return;
+  record.voxSessionId = voxSessionId;
 }
 
 export function appendTranscript(callId: string, role: 'manager' | 'client', text: string): void {

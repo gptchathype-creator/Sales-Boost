@@ -11,9 +11,11 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { handleVoiceDialog } from './voice/voiceDialog';
 import { handleVoiceStreamMessage } from './voice/voiceStream';
-import { addCall, getCallHistory, getTestNumbers } from './voice/callHistory';
+import { addCall, getCallHistory, getTestNumbers, setVoxSessionId } from './voice/callHistory';
 import { resolveVoiceCallUrls, startVoiceCall } from './voice/startVoiceCall';
 import { finalizeVoiceCallSession } from './voice/voiceCallSession';
+import { evaluateDemoExampleFromTranscript } from './voice/demoExampleEvaluation';
+import { computeUiDimensionScoresFromChecklist } from './voice/uiDimensionScores';
 import {
   cancelCallBatch,
   createCallBatch,
@@ -474,13 +476,25 @@ function buildVoiceCallDetailResponse(session: {
       evaluation = JSON.parse(session.evaluationJson) as Record<string, unknown>;
     } catch (_) {}
   }
+  const callSummary =
+    evaluation && (evaluation as any).call_summary && typeof (evaluation as any).call_summary === 'object'
+      ? (evaluation as any).call_summary
+      : null;
+  const replyImprovements =
+    evaluation && Array.isArray((evaluation as any).reply_improvements)
+      ? (evaluation as any).reply_improvements
+      : null;
   const score = session.totalScore ?? (evaluation && typeof (evaluation as any).overall_score_0_100 === 'number'
     ? (evaluation as any).overall_score_0_100
     : null);
   const checklist = evaluation && Array.isArray((evaluation as any).checklist) ? (evaluation as any).checklist : [];
   const issues = evaluation && Array.isArray((evaluation as any).issues) ? (evaluation as any).issues : [];
   const recommendations = evaluation && Array.isArray((evaluation as any).recommendations) ? (evaluation as any).recommendations : [];
-  const dimensionScores = evaluation && (evaluation as any).dimension_scores ? (evaluation as any).dimension_scores : null;
+  const dimensionScoresRaw = evaluation && (evaluation as any).dimension_scores ? (evaluation as any).dimension_scores : null;
+  const dimensionScores =
+    Array.isArray(checklist) && checklist.length > 0
+      ? computeUiDimensionScoresFromChecklist(checklist as Array<{ code?: string; status?: string }>, dimensionScoresRaw)
+      : dimensionScoresRaw;
   const qualityTag = score != null ? (score >= 76 ? 'Хорошо' : score >= 50 ? 'Средне' : 'Плохо') : null;
   const ended = !!session.endedAt;
   const hasEval = !!session.evaluationJson;
@@ -511,6 +525,8 @@ function buildVoiceCallDetailResponse(session: {
     checklist,
     issues,
     recommendations,
+    callSummary,
+    replyImprovements,
     strengths: checklist.filter((c: any) => c.status === 'YES').map((c: any) => c.comment || c.code),
     weaknesses: issues.map((i: any) => (i.recommendation || i.issue_type) || ''),
   };
@@ -2026,6 +2042,33 @@ app.post('/api/public/demo-call/start', async (req, res) => {
   }
 });
 
+/** Пример отчёта на странице /demo-call: полная оценка стенограммы (evaluatorV2 + LLM-сводка и улучшения ответов). */
+app.post('/api/public/demo-call/evaluate-example', async (req, res) => {
+  try {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const raw = (body as { transcript?: unknown }).transcript;
+    if (!Array.isArray(raw)) {
+      return res.status(400).json({ error: 'Ожидается массив transcript: [{ role, text }].' });
+    }
+    const transcript = raw
+      .map((row) =>
+        row && typeof row === 'object'
+          ? {
+              role: String((row as { role?: unknown }).role ?? ''),
+              text: String((row as { text?: unknown }).text ?? ''),
+            }
+          : null
+      )
+      .filter((x): x is { role: string; text: string } => !!x);
+    const result = await evaluateDemoExampleFromTranscript(transcript);
+    res.json(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Не удалось оценить пример.';
+    console.error('public demo-call/evaluate-example error:', err);
+    res.status(500).json({ error: message });
+  }
+});
+
 app.get('/api/public/demo-call/:callId', async (req, res) => {
   try {
     const callId = String(req.params.callId || '').trim();
@@ -2202,22 +2245,54 @@ app.get('/webhooks/vox', (_req, res) => {
 // Voximplant webhook: call events (disconnected, failed, no_answer, busy)
 app.post('/webhooks/vox', async (req, res) => {
   res.status(200).end();
-  const payload = req.body && typeof req.body === 'object' ? req.body : {};
-  const event = payload.event || payload.event_type;
-  const hasTranscript = Array.isArray(payload.transcript);
+  const payload = req.body && typeof req.body === 'object' ? req.body as Record<string, unknown> : {};
+  const voxSessionIdRaw =
+    (payload as { vox_session_id?: unknown }).vox_session_id ??
+    (payload as { vox_call_id?: unknown }).vox_call_id ??
+    (payload as { call_session_history_id?: unknown }).call_session_history_id ??
+    null;
+  const voxSessionId = (() => {
+    if (typeof voxSessionIdRaw === 'number') return Number.isFinite(voxSessionIdRaw) && voxSessionIdRaw > 0 ? voxSessionIdRaw : null;
+    if (typeof voxSessionIdRaw === 'string') {
+      const parsed = Number.parseInt(voxSessionIdRaw, 10);
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+    }
+    // Some payloads may send an object; try common shapes.
+    if (voxSessionIdRaw && typeof voxSessionIdRaw === 'object') {
+      const obj = voxSessionIdRaw as Record<string, unknown>;
+      const nested = obj.call_session_history_id ?? obj.session_id ?? obj.id ?? null;
+      if (typeof nested === 'number') return Number.isFinite(nested) && nested > 0 ? nested : null;
+      if (typeof nested === 'string') {
+        const parsed = Number.parseInt(nested, 10);
+        return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+      }
+    }
+    return null;
+  })();
+  const normalizedPayload =
+    voxSessionId != null
+      ? { ...payload, vox_session_id: voxSessionId }
+      : payload;
+  const event = String((payload as any).event ?? (payload as any).event_type ?? '');
+  const hasTranscript = Array.isArray((normalizedPayload as { transcript?: unknown }).transcript);
+  const callIdStr = String((normalizedPayload as { call_id?: unknown }).call_id ?? '');
+  if (callIdStr && voxSessionId != null) {
+    setVoxSessionId(callIdStr, voxSessionId);
+  }
   console.log('[webhooks/vox] received', {
     event,
-    callId: payload.call_id,
-    to: payload.to ?? null,
-    voxSessionId: payload.vox_session_id ?? null,
-    keys: Object.keys(payload),
-    transcriptTurns: hasTranscript ? payload.transcript.length : 0,
+    callId: (normalizedPayload as { call_id?: unknown }).call_id,
+    to: (normalizedPayload as { to?: unknown }).to ?? null,
+    voxSessionId: (normalizedPayload as { vox_session_id?: unknown }).vox_session_id ?? null,
+    voxSessionIdRaw: voxSessionIdRaw ?? null,
+    keys: Object.keys(normalizedPayload),
+    transcriptTurns: hasTranscript ? (normalizedPayload as { transcript: unknown[] }).transcript.length : 0,
   });
   if (['disconnected', 'failed', 'no_answer', 'busy'].includes(event)) {
-    finalizeVoiceCallSession(payload).catch((err) => {
+    finalizeVoiceCallSession(normalizedPayload).catch((err) => {
       console.error('[webhooks/vox] finalizeVoiceCallSession error:', err instanceof Error ? err.message : err);
     });
-    onVoxBatchWebhook(payload).catch((err) => {
+    onVoxBatchWebhook(normalizedPayload).catch((err) => {
       console.error('[webhooks/vox] onVoxBatchWebhook error:', err instanceof Error ? err.message : err);
     });
   }

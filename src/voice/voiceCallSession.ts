@@ -9,6 +9,7 @@ import { loadCar } from '../data/carLoader';
 import { getDefaultState } from '../state/defaultState';
 import { evaluateSessionV2 } from '../llm/evaluatorV2';
 import { getTranscriptFromVoxLog } from './voxLogTranscript';
+import { buildConversationPairs, generateCallSummary, generateReplyImprovements } from './callSummary';
 
 export type VoxWebhookEvent = 'progress' | 'connected' | 'disconnected' | 'failed' | 'busy' | 'no_answer';
 
@@ -22,6 +23,8 @@ export interface VoxWebhookPayload {
   transcript?: TranscriptTurn[] | unknown[];
   /** Voximplant session id (from AppEvents.Started) — used to fetch session log and parse transcript if not sent */
   vox_session_id?: number;
+  /** Some Vox scenarios send vox_call_id instead of vox_session_id (call session history id). */
+  vox_call_id?: number | string;
 }
 
 function normalizeOutcome(event: string, details?: { reason?: string; code?: number }): string {
@@ -51,6 +54,10 @@ export async function finalizeVoiceCallSession(payload: VoxWebhookPayload): Prom
   }
 
   const record = getRecordByCallId(callId);
+  const resolvedVoxSessionId =
+    payload.vox_session_id ??
+    (payload.vox_call_id != null ? Number.parseInt(String(payload.vox_call_id), 10) || null : null) ??
+    (record?.voxSessionId ?? null);
   const startedAt = record ? new Date(record.startedAt) : new Date();
   const endedAt = new Date();
   const durationSec = record ? Math.round((endedAt.getTime() - startedAt.getTime()) / 1000) : 0;
@@ -61,7 +68,7 @@ export async function finalizeVoiceCallSession(payload: VoxWebhookPayload): Prom
     to,
     hasPayloadTranscript: Array.isArray(payload.transcript) ? payload.transcript.length : 0,
     hasMemoryTranscript: record?.transcript?.length ?? 0,
-    voxSessionId: payload.vox_session_id ?? null,
+    voxSessionId: resolvedVoxSessionId,
   });
 
   // Prefer transcript from webhook payload (e.g. realtime_pure sends it); fallback to in-memory record (dialog scenario)
@@ -115,16 +122,24 @@ export async function finalizeVoiceCallSession(payload: VoxWebhookPayload): Prom
   let transcriptSource: 'webhook' | 'memory' | 'vox_log' | 'none' =
     payloadTranscript.length > 0 ? 'webhook' : (record?.transcript?.length ? 'memory' : 'none');
 
-  if (transcript.length === 0 && payload.vox_session_id != null) {
+  if (transcript.length === 0 && resolvedVoxSessionId != null) {
     try {
       await new Promise((r) => setTimeout(r, 2000));
-      const { transcript: logTranscript } = await getTranscriptFromVoxLog(payload.vox_session_id);
+      const { transcript: logTranscript, error: voxLogError } = await getTranscriptFromVoxLog(resolvedVoxSessionId);
       if (logTranscript.length > 0) {
         transcript = logTranscript;
         transcriptSource = 'vox_log';
         await prisma.voiceCallSession.update({
           where: { callId },
           data: { transcriptJson: JSON.stringify(transcript) },
+        });
+      } else if (voxLogError === 'log_unauthorized') {
+        await prisma.voiceCallSession.update({
+          where: { callId },
+          data: {
+            failureReason:
+              'Transcript unavailable: Vox log is protected (401). Set VOX_SERVICE_ACCOUNT_CREDENTIALS in .env to allow JWT log access.',
+          },
         });
       }
     } catch (err) {
@@ -165,7 +180,43 @@ export async function finalizeVoiceCallSession(payload: VoxWebhookPayload): Prom
       behaviorSignals: [],
     });
 
-    const evaluationJson = JSON.stringify(evaluation);
+    // ---- Extended call summary (team-summary style) + per-answer improvements ----
+    let callSummary: unknown = null;
+    let replyImprovements: unknown = null;
+    try {
+      const checklist = Array.isArray((evaluation as any).checklist) ? (evaluation as any).checklist : [];
+      const issues = Array.isArray((evaluation as any).issues) ? (evaluation as any).issues : [];
+      const recommendations = Array.isArray((evaluation as any).recommendations) ? (evaluation as any).recommendations : [];
+      const dimensionScores = (evaluation as any).dimension_scores ?? null;
+
+      callSummary = await generateCallSummary({
+        transcript,
+        outcome,
+        totalScore: evaluation.overall_score_0_100 ?? null,
+        dimensionScores: dimensionScores && typeof dimensionScores === 'object' ? dimensionScores : null,
+        issues,
+        checklist,
+        recommendations,
+      });
+
+      const pairs = buildConversationPairs(transcript);
+      if (pairs.length > 0) {
+        const improvements = await generateReplyImprovements({
+          pairs,
+          limit: 12,
+          issues,
+        });
+        replyImprovements = improvements;
+      }
+    } catch (err) {
+      console.warn('[voice/session] callSummary generation failed:', err instanceof Error ? err.message : err);
+    }
+
+    const evaluationJson = JSON.stringify({
+      ...evaluation,
+      call_summary: callSummary,
+      reply_improvements: replyImprovements,
+    });
     const totalScore = evaluation.overall_score_0_100 ?? null;
 
     await prisma.voiceCallSession.update({

@@ -18,8 +18,17 @@ function normalizePhone(v) {
 }
 function resolveVoiceCallUrls() {
     const tunnelUrl = (0, tunnel_1.getTunnelUrl)()?.replace(/\/$/, '') || '';
-    const baseUrl = (tunnelUrl || process.env.VOICE_DIALOG_BASE_URL || process.env.MINI_APP_URL || '').replace(/\/$/, '');
-    const eventUrlBase = (tunnelUrl || process.env.PUBLIC_BASE_URL || process.env.MINI_APP_URL || baseUrl).replace(/\/$/, '');
+    const miniAppUrl = String(process.env.MINI_APP_URL || '').replace(/\/$/, '');
+    const voiceDialogBaseUrl = String(process.env.VOICE_DIALOG_BASE_URL || '').replace(/\/$/, '');
+    const publicBaseUrl = String(process.env.PUBLIC_BASE_URL || '').replace(/\/$/, '');
+    // Prefer stable HTTPS URLs from env for webhooks so they don't break on local tunnel restart.
+    const eventUrlBase = publicBaseUrl ||
+        miniAppUrl ||
+        tunnelUrl ||
+        voiceDialogBaseUrl ||
+        '';
+    // For dialog_url / stream_url: prefer explicit VOICE_DIALOG_BASE_URL, then MINI_APP_URL, then live tunnel.
+    const baseUrl = (voiceDialogBaseUrl || miniAppUrl || tunnelUrl || '').replace(/\/$/, '');
     const eventUrl = eventUrlBase ? `${eventUrlBase}/webhooks/vox` : '';
     return { tunnelUrl, baseUrl, eventUrlBase, eventUrl };
 }
@@ -116,13 +125,42 @@ async function startVoiceCall(to, options = {}) {
         });
         const text = await body.text();
         if (statusCode >= 400) {
+            console.warn('[vox] StartScenarios HTTP error', {
+                statusCode,
+                scriptName,
+                ruleName,
+                to: toNormalized,
+                eventUrlPresent: Boolean(eventUrl),
+                callerIdPresent: Boolean(customData?.caller_id),
+                response: text.slice(0, 500),
+            });
             return { error: `Vox API HTTP ${statusCode}: ${text.slice(0, 200)}` };
         }
         try {
             const parsed = JSON.parse(text);
-            if (parsed.error) {
+            const debugEnabled = process.env.VOX_DEBUG === '1' || process.env.VOX_DEBUG === 'true';
+            if (debugEnabled) {
+                console.log('[vox] StartScenarios OK', {
+                    scriptName,
+                    ruleName,
+                    to: toNormalized,
+                    eventUrlPresent: Boolean(eventUrl),
+                    callerIdPresent: Boolean(customData?.caller_id),
+                    result: parsed?.result,
+                    callSessionHistoryId: parsed?.call_session_history_id,
+                    raw: parsed,
+                });
+            }
+            if (parsed?.error) {
                 const msg = parsed.error.msg || JSON.stringify(parsed.error);
+                console.warn('[vox] StartScenarios error payload', { scriptName, ruleName, to: toNormalized, msg });
                 return { error: `Vox API: ${msg}` };
+            }
+            // Some Vox APIs return result=0 without "error" object.
+            if (parsed?.result === 0) {
+                const msg = parsed?.msg || parsed?.message || 'Unknown Vox API failure (result=0).';
+                console.warn('[vox] StartScenarios failed result=0', { scriptName, ruleName, to: toNormalized, msg, raw: parsed });
+                return { error: `Vox API: ${String(msg)}` };
             }
         }
         catch (_) {

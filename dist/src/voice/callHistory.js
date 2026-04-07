@@ -5,6 +5,7 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.addCall = addCall;
+exports.setVoxSessionId = setVoxSessionId;
 exports.appendTranscript = appendTranscript;
 exports.getCallHistory = getCallHistory;
 exports.getRecordByCallId = getRecordByCallId;
@@ -23,6 +24,7 @@ function addCall(callId, to) {
         to: normalizePhone(to),
         startedAt: new Date().toISOString(),
         transcript: [],
+        voxSessionId: null,
     };
     byCallId.set(callId, record);
     calls.unshift(record);
@@ -31,6 +33,14 @@ function addCall(callId, to) {
         if (removed)
             byCallId.delete(removed.callId);
     }
+}
+function setVoxSessionId(callId, voxSessionId) {
+    const record = byCallId.get(callId);
+    if (!record)
+        return;
+    if (!Number.isFinite(voxSessionId) || voxSessionId <= 0)
+        return;
+    record.voxSessionId = voxSessionId;
 }
 function appendTranscript(callId, role, text) {
     if (!text || !text.trim())

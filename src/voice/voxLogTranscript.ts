@@ -20,6 +20,7 @@ interface VoxServiceAccountCredentials {
 export interface GetTranscriptFromVoxLogResult {
   transcript: TranscriptTurn[];
   source: 'vox_log';
+  error?: 'missing_api_keys' | 'get_call_history_failed' | 'no_log_url' | 'log_unauthorized' | 'log_fetch_failed';
 }
 
 /**
@@ -32,7 +33,7 @@ export async function getTranscriptFromVoxLog(voxSessionId: number): Promise<Get
 
   if (!accountId || !apiKey) {
     console.warn('[voxLogTranscript] VOX_ACCOUNT_ID or VOX_API_KEY not set, skipping log fetch');
-    return { transcript: [], source: 'vox_log' };
+    return { transcript: [], source: 'vox_log', error: 'missing_api_keys' };
   }
 
   const form = new URLSearchParams({
@@ -54,13 +55,13 @@ export async function getTranscriptFromVoxLog(voxSessionId: number): Promise<Get
     });
   } catch (err) {
     console.warn('[voxLogTranscript] GetCallHistory request failed:', err instanceof Error ? err.message : err);
-    return { transcript: [], source: 'vox_log' };
+    return { transcript: [], source: 'vox_log', error: 'get_call_history_failed' };
   }
 
   const text = await res.body.text();
   if (res.statusCode >= 400) {
     console.warn('[voxLogTranscript] GetCallHistory HTTP', res.statusCode, text.slice(0, 200));
-    return { transcript: [], source: 'vox_log' };
+    return { transcript: [], source: 'vox_log', error: 'get_call_history_failed' };
   }
 
   let json: { result?: Array<{ log_file_url?: string }>; error?: { msg?: string } };
@@ -68,18 +69,18 @@ export async function getTranscriptFromVoxLog(voxSessionId: number): Promise<Get
     json = JSON.parse(text) as typeof json;
   } catch {
     console.warn('[voxLogTranscript] GetCallHistory response not JSON');
-    return { transcript: [], source: 'vox_log' };
+    return { transcript: [], source: 'vox_log', error: 'get_call_history_failed' };
   }
 
   if (json.error) {
     console.warn('[voxLogTranscript] GetCallHistory error:', json.error.msg ?? json.error);
-    return { transcript: [], source: 'vox_log' };
+    return { transcript: [], source: 'vox_log', error: 'get_call_history_failed' };
   }
 
   const logUrl = json.result?.[0]?.log_file_url;
   if (!logUrl || typeof logUrl !== 'string') {
     console.warn('[voxLogTranscript] No log_file_url in GetCallHistory result');
-    return { transcript: [], source: 'vox_log' };
+    return { transcript: [], source: 'vox_log', error: 'no_log_url' };
   }
 
   let logBody: string;
@@ -92,12 +93,18 @@ export async function getTranscriptFromVoxLog(voxSessionId: number): Promise<Get
     const logRes = await request(logUrl, { method: 'GET', headers });
     logBody = await logRes.body.text();
     if (logRes.statusCode >= 400) {
+      if (logRes.statusCode === 401 && !jwt) {
+        console.warn(
+          '[voxLogTranscript] Log fetch HTTP 401 (secure logs). Set VOX_SERVICE_ACCOUNT_CREDENTIALS to enable JWT.'
+        );
+        return { transcript: [], source: 'vox_log', error: 'log_unauthorized' };
+      }
       console.warn('[voxLogTranscript] Log fetch HTTP', logRes.statusCode);
-      return { transcript: [], source: 'vox_log' };
+      return { transcript: [], source: 'vox_log', error: 'log_fetch_failed' };
     }
   } catch (err) {
     console.warn('[voxLogTranscript] Log fetch failed:', err instanceof Error ? err.message : err);
-    return { transcript: [], source: 'vox_log' };
+    return { transcript: [], source: 'vox_log', error: 'log_fetch_failed' };
   }
 
   const transcript = parseTranscriptFromLogText(logBody);

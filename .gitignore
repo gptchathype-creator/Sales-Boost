@@ -12,3 +12,6 @@ out/
 cert.pem
 key.pem
 .cursor/
+
+# Local env snapshots (secrets; never commit)
+backups/

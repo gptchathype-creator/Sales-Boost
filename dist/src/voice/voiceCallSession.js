@@ -11,6 +11,7 @@ const carLoader_1 = require("../data/carLoader");
 const defaultState_1 = require("../state/defaultState");
 const evaluatorV2_1 = require("../llm/evaluatorV2");
 const voxLogTranscript_1 = require("./voxLogTranscript");
+const callSummary_1 = require("./callSummary");
 function normalizeOutcome(event, details) {
     if (event === 'no_answer' || event === 'busy' || event === 'failed')
         return event;
@@ -36,6 +37,9 @@ async function finalizeVoiceCallSession(payload) {
         return;
     }
     const record = (0, callHistory_1.getRecordByCallId)(callId);
+    const resolvedVoxSessionId = payload.vox_session_id ??
+        (payload.vox_call_id != null ? Number.parseInt(String(payload.vox_call_id), 10) || null : null) ??
+        (record?.voxSessionId ?? null);
     const startedAt = record ? new Date(record.startedAt) : new Date();
     const endedAt = new Date();
     const durationSec = record ? Math.round((endedAt.getTime() - startedAt.getTime()) / 1000) : 0;
@@ -46,7 +50,7 @@ async function finalizeVoiceCallSession(payload) {
         to,
         hasPayloadTranscript: Array.isArray(payload.transcript) ? payload.transcript.length : 0,
         hasMemoryTranscript: record?.transcript?.length ?? 0,
-        voxSessionId: payload.vox_session_id ?? null,
+        voxSessionId: resolvedVoxSessionId,
     });
     // Prefer transcript from webhook payload (e.g. realtime_pure sends it); fallback to in-memory record (dialog scenario)
     const rawPayloadTranscript = payload.transcript;
@@ -91,16 +95,24 @@ async function finalizeVoiceCallSession(payload) {
     // 2) If transcript missing but we have vox_session_id (realtime_pure), fetch from Voximplant log and update
     let transcript = initialTranscript;
     let transcriptSource = payloadTranscript.length > 0 ? 'webhook' : (record?.transcript?.length ? 'memory' : 'none');
-    if (transcript.length === 0 && payload.vox_session_id != null) {
+    if (transcript.length === 0 && resolvedVoxSessionId != null) {
         try {
             await new Promise((r) => setTimeout(r, 2000));
-            const { transcript: logTranscript } = await (0, voxLogTranscript_1.getTranscriptFromVoxLog)(payload.vox_session_id);
+            const { transcript: logTranscript, error: voxLogError } = await (0, voxLogTranscript_1.getTranscriptFromVoxLog)(resolvedVoxSessionId);
             if (logTranscript.length > 0) {
                 transcript = logTranscript;
                 transcriptSource = 'vox_log';
                 await db_1.prisma.voiceCallSession.update({
                     where: { callId },
                     data: { transcriptJson: JSON.stringify(transcript) },
+                });
+            }
+            else if (voxLogError === 'log_unauthorized') {
+                await db_1.prisma.voiceCallSession.update({
+                    where: { callId },
+                    data: {
+                        failureReason: 'Transcript unavailable: Vox log is protected (401). Set VOX_SERVICE_ACCOUNT_CREDENTIALS in .env to allow JWT log access.',
+                    },
                 });
             }
         }
@@ -138,7 +150,41 @@ async function finalizeVoiceCallSession(payload) {
             earlyFail: false,
             behaviorSignals: [],
         });
-        const evaluationJson = JSON.stringify(evaluation);
+        // ---- Extended call summary (team-summary style) + per-answer improvements ----
+        let callSummary = null;
+        let replyImprovements = null;
+        try {
+            const checklist = Array.isArray(evaluation.checklist) ? evaluation.checklist : [];
+            const issues = Array.isArray(evaluation.issues) ? evaluation.issues : [];
+            const recommendations = Array.isArray(evaluation.recommendations) ? evaluation.recommendations : [];
+            const dimensionScores = evaluation.dimension_scores ?? null;
+            callSummary = await (0, callSummary_1.generateCallSummary)({
+                transcript,
+                outcome,
+                totalScore: evaluation.overall_score_0_100 ?? null,
+                dimensionScores: dimensionScores && typeof dimensionScores === 'object' ? dimensionScores : null,
+                issues,
+                checklist,
+                recommendations,
+            });
+            const pairs = (0, callSummary_1.buildConversationPairs)(transcript);
+            if (pairs.length > 0) {
+                const improvements = await (0, callSummary_1.generateReplyImprovements)({
+                    pairs,
+                    limit: 12,
+                    issues,
+                });
+                replyImprovements = improvements;
+            }
+        }
+        catch (err) {
+            console.warn('[voice/session] callSummary generation failed:', err instanceof Error ? err.message : err);
+        }
+        const evaluationJson = JSON.stringify({
+            ...evaluation,
+            call_summary: callSummary,
+            reply_improvements: replyImprovements,
+        });
         const totalScore = evaluation.overall_score_0_100 ?? null;
         await db_1.prisma.voiceCallSession.update({
             where: { callId },

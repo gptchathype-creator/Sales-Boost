@@ -11,8 +11,11 @@ export interface VoiceCallRecord {
     to: string;
     startedAt: string;
     transcript: TranscriptTurn[];
+    /** Voximplant call session history id (used to fetch logs/transcripts). */
+    voxSessionId?: number | null;
 }
 export declare function addCall(callId: string, to: string): void;
+export declare function setVoxSessionId(callId: string, voxSessionId: number): void;
 export declare function appendTranscript(callId: string, role: 'manager' | 'client', text: string): void;
 export declare function getCallHistory(limit?: number): VoiceCallRecord[];
 /** Get one call by callId (for webhook to finalize and persist). */
